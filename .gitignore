@@ -1,0 +1,16 @@
+# Сборочные директории CMake
+build/
+bin/
+lib/
+
+# Метаданные редакторов и кэш clangd
+.vscode/
+.idea/
+.cache/
+.clangd/
+compile_commands.json
+
+# Временные файлы Neovim
+*.swp
+*.swo
+*~
