@@ -46,7 +46,7 @@ The daemon maintains a two-column layout on each workspace:
 
 ## Requirements
 
-- `clang` (or `gcc` with C23 support)
+- `clang` (with C23 support)
 - `cmake` (>= 3.25)
 - `lld`
 - `json-c`
