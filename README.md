@@ -32,7 +32,7 @@ The daemon maintains a two-column layout on each workspace:
 1. **Window creation**:
    - The first window takes 100% width.
    - The second window opens to the right; the master window resizes to 55%.
-   - Subsequent windows (3+) automatically join the vertical stack on the right.
+   - Subsequent windows automatically join the vertical stack on the right.
 2. **Master promotion & swap**:
    - Moving a stack window left (`move left`) promotes it to Master.
    - Moving the Master window right (`move right`) sends it into the stack, promoting the top stack window.
