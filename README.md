@@ -94,8 +94,8 @@ systemctl --user enable --now sway-master-stack.service
 
 ## Technical Details
 
-- **Footprint**: ~2 MB RSS, 0.0% CPU when idle (event-driven via blocking kernel `read()` on the UNIX domain socket).
-- **Safety**: Clean under AddressSanitizer and UndefinedBehaviorSanitizer (zero leaks).
+- **Footprint**: ~2 MB RSS, 0.0% CPU when idle.
+- **Safety**: Clean under AddressSanitizer and UndefinedBehaviorSanitizer ==> zero memory leaks.
 - **Atomic execution**: Generates single-transaction batch commands joined by `;` to avoid visual tearing and race conditions.
 
 ---
