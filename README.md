@@ -94,9 +94,9 @@ systemctl --user enable --now sway-master-stack.service
 
 ## Technical Details
 
-- **Footprint**: ~2 MB RSS, 0.0% CPU when idle.
-- **Safety**: Clean under AddressSanitizer and UndefinedBehaviorSanitizer ==> zero memory leaks.
-- **Atomic execution**: Generates single-transaction batch commands joined by `;` to avoid visual tearing and race conditions.
+- **Footprint**: ~2 MB RSS, 0.0% CPU usage at idle (event-driven via blocking UNIX socket `read()`).
+- **Memory & Safety**: Verified clean under AddressSanitizer and UndefinedBehaviorSanitizer (zero leaks, zero UB).
+- **Atomic IPC**: Groups layout commands into a single `;`-separated transaction to eliminate visual flicker and IPC state races.
 
 ---
 
