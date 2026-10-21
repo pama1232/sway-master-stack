@@ -126,6 +126,13 @@ exec sway-master-stack
 
 ---
 
-## License
+## Acknowledgements / Благодарности
+
+- Written, debugged, and optimized with the assistance of **GLM 5.3**.
+- Разработано, отлажено и оптимизировано с помощью **GLM 5.3**.
+
+---
+
+## License / Лицензия
 
 [MIT](LICENSE) © 2026 [pama1232](https://github.com/pama1232)
