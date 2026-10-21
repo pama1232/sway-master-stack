@@ -77,4 +77,3 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${JSON_C_INCLUDE_DIRS})
 # Установка
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES systemd/sway-master-stack.service DESTINATION ${CMAKE_INSTALL_DATADIR}/systemd/user)
