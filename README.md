@@ -10,6 +10,10 @@
 
 ---
 
+![Demo](demo.gif)
+
+---
+
 ## English
 
 A fast, no-nonsense DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and SwayFX. 
