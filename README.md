@@ -10,7 +10,7 @@
 
 ---
 
-![Demo](demo-nvenc.mp4)
+![Demo](demo.gif)
 
 > [!NOTE]
 > **About visual smoothness in the demo:**  
