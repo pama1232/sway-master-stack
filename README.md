@@ -33,7 +33,7 @@ Written in pure **ISO C23** using the native Sway UNIX IPC protocol and `json-c`
 
 ### What makes v2.0 special?
 
-1. **Zero-Lag Spawn**: Windows appear in their correct place immediately without flashing or moving around after creation.
+1. **Zero-Lag Spawn**: Windows appear in their correct place immediately without flashing or moving around after creation. (to the extent that sway allows)
 2. **True DWM Zoom & Return**:
    - Hit your regular `move left` binding on any stack window -> it instantly swaps with Master.
    - Hit `move right` on Master -> it returns right back to where it came from in the stack.
@@ -92,7 +92,7 @@ exec sway-master-stack
 
 ### Главные фишки версии 2.0:
 
-1. **Мгновенное появление окон**: Новые окна сразу встают на своё место без перескакиваний и дерготни.
+1. **Мгновенное появление окон**: Новые окна сразу встают на своё место без перескакиваний и дерготни. (насколько это позволяет sway)
 2. **Настоящий DWM Зум и Возврат**:
    - Нажмите ваш обычный бинд `move left` на любом окне стопки — оно станет Мастером.
    - Нажмите `move right` на Мастере — он вернётся точно на то место в стопке, откуда пришёл.
