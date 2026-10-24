@@ -13,10 +13,10 @@
 ![Demo](demo.gif)
 
 > [!NOTE]
-> The GIF above shows **SwayFX with animations on (250 ms)**. **On vanilla Sway windows will visibly jump and flick**: the daemon drives the layout over IPC, and sway applies every layout change as a discrete transaction - there is no animation layer to interpolate between states. This is sway's own design (a manual resize in plain sway flickers the same way) and it cannot be smoothed from outside the compositor. If the jumping bothers you, run SwayFX.
+> The GIF above shows **SwayFX with animations on (250 ms)**. **On vanilla Sway windows will visibly jump and flick**: the daemon drives the layout over IPC, and Sway applies every layout change as a discrete transaction - there is no animation layer to interpolate between states. This is Sway's own design (a manual resize in plain Sway flickers the same way) and it cannot be smoothed from outside the compositor. If the jumping bothers you, run SwayFX.
 
 > [!NOTE]
-> Гифка выше показывает **SwayFX с включёнными анимациями (250 мс)**. **На ванильном sway окна будут заметно дёргаться и мерцать**: демон управляет раскладкой через IPC, а sway применяет каждое изменение раскладки дискретной транзакцией - слоя анимаций, который сгладил бы переход, там нет. Это собственный дизайн sway (ручной ресайз в чистом sway дёргается так же), изнутри IPC это не сгладить. Если дёрганье мешает — используйте swayfx.
+> Гифка выше показывает **SwayFX с включёнными анимациями (250 мс)**. **На ванильном Sway окна будут заметно дёргаться и мерцать**: демон управляет раскладкой через IPC, а Sway применяет каждое изменение раскладки дискретной транзакцией - слоя анимаций, который сгладил бы переход, там нет. Это собственный дизайн Sway (ручной ресайз в чистом sway дёргается так же), изнутри IPC это не сгладить. Если дёрганье мешает — используйте SwayFX.
 
 ---
 
