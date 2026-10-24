@@ -13,139 +13,123 @@
 ![Demo](demo.gif)
 
 > [!NOTE]
-> The GIF above shows **SwayFX with animations on (250 ms)**. **On vanilla Sway windows will visibly jump and flick**: the daemon drives the layout over IPC, and Sway applies every layout change as a discrete transaction - there is no animation layer to interpolate between states. This is Sway's own design (a manual resize in plain Sway flickers the same way) and it cannot be smoothed from outside the compositor. If the jumping bothers you, run SwayFX.
+> The GIF shows SwayFX with animations enabled (250 ms). On vanilla Sway windows jump and flick: every layout change lands as a discrete transaction and there is no animation layer to smooth the transition. This is Sway's own design (a manual resize in plain Sway flickers the same way) and it cannot be smoothed over IPC. If this bothers you, run SwayFX.
 
 > [!NOTE]
-> Гифка выше показывает **SwayFX с включёнными анимациями (250 мс)**. **На ванильном Sway окна будут заметно дёргаться и мерцать**: демон управляет раскладкой через IPC, а Sway применяет каждое изменение раскладки дискретной транзакцией - слоя анимаций, который сгладил бы переход, там нет. Это собственный дизайн Sway (ручной ресайз в чистом Sway дёргается так же), изнутри IPC это не сгладить. Если дёрганье мешает — используйте SwayFX.
+> Гифка показывает SwayFX с включёнными анимациями (250 мс). На ванильном Sway окна дёргаются и мерцают: каждое изменение раскладки ложится дискретной транзакцией, и нет слоя анимаций, который сгладил бы переход. Это собственный дизайн Sway (ручной ресайз в чистом Sway дёргается так же), изнутри IPC это не сгладить. Если это мешает, используйте SwayFX.
 
 ---
 
 ## English
 
-A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and SwayFX. 
-
-Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
+A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and [SwayFX](https://github.com/WillPower3309/swayfx). It listens to Sway events over IPC and restores the layout with a single batch of commands. Nothing to add to your Sway config. Written in ISO C23, tested on sway 1.12.
 
 ```text
-+------------------------+---------------------+
-|                        |       Stack 1       |
-|                        +---------------------+
-|        Master          |       Stack 2       |
-|         55%            +---------------------+
-|                        |       Stack 3       |
-|                        |         45%         |
-+------------------------+---------------------+
++---------------------------+----------------------+
+|                           |       Stack 1        |
+|                           +----------------------+
+|         Master            |       Stack 2        |
+|                           +----------------------+
+|                           |       Stack 3        |
+|            55%            |         45%          |
++---------------------------+----------------------+
 ```
 
 ### Features
 
-1. **Deterministic Master/Stack Layout**:
-   - The first window takes 100% of the workspace.
-   - The second window opens to the right; the master window resizes to 55%.
-   - Subsequent windows (3+) join the vertical stack on the right.
-2. **Snapshot-Based Placement**:
-   - Uses cached workspace layouts to dispatch repositioning commands immediately upon receiving events.
-3. **DWM Zoom & Return**:
-   - Regular `move left` on any stack window promotes it to Master.
-   - Regular `move right` on Master returns it back to its previous position in the stack.
-4. **Waybar & Tray Applet Handling**:
-   - Checks socket buffers during window map events to allow floating rules (`for_window ... floating`) to apply first, preventing popups from disrupting the tiled grid.
-5. **Multi-Monitor Safe**:
-   - Resolves workspaces by container ID within their local tree instead of relying on global seat focus. Does not move windows across display boundaries on window close.
-6. **Configurable Master Ratio**:
-   - Specify master width on launch: `sway-master-stack 60` for 60/40, or omit the argument for the default 55/45. Can also be set via the `SMS_PCT` environment variable.
-7. **No Config Modification Required**:
-   - Works with default Sway move keybindings. Does not require dummy bindings or custom commands in your Sway configuration.
-8. **Low Resource Usage**:
-   - Consumes **~2 MB RSS** and 0.0% CPU when idle (event-driven via blocking `read()` on the UNIX socket). Checked with AddressSanitizer and UndefinedBehaviorSanitizer.
+- **Master/stack layout**: the first window takes the workspace, every next one joins the stack on the right.
+- **Focus zoom**: `move left` promotes a stack window to master, `move right` returns it. Standard bindings, nothing to rebind.
+- **Fast response**: the batch goes out in a single `write()`, no tree round trip.
+- **Tray and popups stay out**: the floating verdict is read from the socket before a new window is touched.
+- **Multi-monitor safe**: windows stay on their output when the master closes.
+- **Light**: ~2 MB RAM, 0% CPU idle, clean under AddressSanitizer and UndefinedBehaviorSanitizer.
+
+### Configuration
+
+- `sway-master-stack 60`: master share at launch, range 10 to 90. Default 55/45.
+- `SMS_PCT` environment variable does the same, the command line argument wins.
 
 ### Requirements
 
-- `clang` (>= 18 with C23 support)
+- `clang` (>= 18, C23)
 - `cmake` (>= 3.25)
 - `lld`
 - `json-c`
 - `pkgconf`
 
-Install dependencies on Arch Linux:
+On Arch Linux:
+
 ```sh
 sudo pacman -S --needed clang lld cmake json-c pkgconf
 ```
 
-### Building & Installing
+### Building
 
 ```sh
 git clone https://github.com/pama1232/sway-master-stack.git
 cd sway-master-stack
 
-# Build release binary
 CC=clang cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
-# Install binary to /usr/local/bin
 sudo cmake --install build
 ```
 
-### Sway Setup
+### Sway setup
 
-Add this line to `~/.config/sway/config`:
+Add to `~/.config/sway/config`:
 
 ```sway
 exec sway-master-stack
 ```
 
-*(Or specify a custom ratio, e.g. `exec sway-master-stack 60`)*.
+Or with a custom ratio:
+
+```sway
+exec sway-master-stack 60
+```
 
 ---
 
 ## Русский
 
-Небольшой демон тайлинга Master-Stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и SwayFX.
-
-Написан на **ISO C23** через нативный сокет Sway IPC (`$SWAYSOCK`) и библиотеку `json-c`.
+Небольшой демон тайлинга master/stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и [SwayFX](https://github.com/WillPower3309/swayfx). Он слушает события Sway по IPC и восстанавливает раскладку одной пачкой команд. В конфиг Sway добавлять нечего. Написан на ISO C23, протестирован на sway 1.12.
 
 ```text
-+------------------------+---------------------+
-|                        |       Стопка 1      |
-|                        +---------------------+
-|        Мастер          |       Стопка 2      |
-|         55%            +---------------------+
-|                        |       Стопка 3      |
-|                        |         45%         |
-+------------------------+---------------------+
++---------------------------+----------------------+
+|                           |       Стопка 1       |
+|                           +----------------------+
+|         Мастер            |       Стопка 2       |
+|                           +----------------------+
+|                           |       Стопка 3       |
+|            55%            |         45%          |
++---------------------------+----------------------+
 ```
 
 ### Возможности
 
-1. **Предсказуемый Master/Stack**:
-   - Первое окно занимает 100% стола.
-   - Второе окно встаёт справа; мастер занимает 55%.
-   - Все следующие окна (3+) ложатся в правую вертикальную стопку.
-2. **Расстановка по снимкам**:
-   - Использует сохранённую структуру стола для быстрой отправки команд сразу при получении события.
-3. **DWM Зум и Возврат**:
-   - Стандартный `move left` на окне стопки делает его Мастером.
-   - Стандартный `move right` на Мастере возвращает его обратно на прежнее место в стопке.
-4. **Устойчивость к трей-окнам**:
-   - Проверяет буфер сокета в момент мапа, позволяя правилам плавающих окон (`for_window ... floating`) сработать до перестроения тайлинга.
-5. **Корректная работа с несколькими мониторами**:
-   - Ищет контейнеры по ID внутри локального дерева стола, не завязываясь на глобальный фокус. Окна не улетают на соседний монитор при закрытии мастера.
-6. **Выбор пропорций**:
-   - Ширину мастера можно задать аргументом при запуске: `sway-master-stack 60` (для 60/40) или переменной `SMS_PCT`. По умолчанию: 55/45.
-7. **Без лишних правок конфига**:
-   - Работает со стандартными биндами перемещения Sway. Не требует сторонних команд или фиктивных биндингов.
-8. **Экономное потребление**:
-   - Занимает **~2 МБ ОЗУ** и 0% CPU в простое (спит на блокирующем вызове `read()` из сокета). Проверен под AddressSanitizer и UndefinedBehaviorSanitizer.
+- **Раскладка master/stack**: первое окно занимает весь стол, каждое следующее ложится в стопку справа.
+- **Зум фокусом**: `move left` поднимает окно стопки в мастер, `move right` возвращает на место. Стандартные бинды, перевешивать не нужно.
+- **Быстрый отклик**: команды уходят одним `write()`, без обхода дерева.
+- **Трей и попапы не трогаются**: вердикт по плаванию вычитывается из сокета до того, как демон тронет новое окно.
+- **Мультимонитор**: окна не улетают на другой выход при закрытии мастера.
+- **Лёгкий**: ~2 МБ RAM, 0% CPU в простое, чист под AddressSanitizer и UndefinedBehaviorSanitizer.
+
+### Настройка
+
+- `sway-master-stack 60`: доля мастера при запуске, диапазон от 10 до 90. По умолчанию 55/45.
+- Переменная `SMS_PCT` делает то же самое, аргумент командной строки сильнее.
 
 ### Зависимости
 
-- `clang` (>= 18 с поддержкой C23)
+- `clang` (>= 18, C23)
 - `cmake` (>= 3.25)
 - `lld`
 - `json-c`
 - `pkgconf`
 
-Установка зависимостей в Arch Linux:
+В Arch Linux:
+
 ```sh
 sudo pacman -S --needed clang lld cmake json-c pkgconf
 ```
@@ -156,23 +140,25 @@ sudo pacman -S --needed clang lld cmake json-c pkgconf
 git clone https://github.com/pama1232/sway-master-stack.git
 cd sway-master-stack
 
-# Сборка Release-бинарника
 CC=clang cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
-# Установка бинарника в /usr/local/bin
 sudo cmake --install build
 ```
 
 ### Подключение в Sway
 
-Добавьте строку в `~/.config/sway/config`:
+Добавьте в `~/.config/sway/config`:
 
 ```sway
 exec sway-master-stack
 ```
 
-*(Или с нужным процентом, например: `exec sway-master-stack 60`)*.
+Или с нужной долей мастера:
+
+```sway
+exec sway-master-stack 60
+```
 
 ---
 
@@ -181,10 +167,6 @@ exec sway-master-stack
 - Written, debugged, and optimized with the assistance of **GLM 5.3**.
 - Разработано, отлажено и оптимизировано с помощью **GLM 5.3**.
 
----
-
 ## License / Лицензия
 
 [MIT](LICENSE) © 2026 [pama1232](https://github.com/pama1232)
-
----
