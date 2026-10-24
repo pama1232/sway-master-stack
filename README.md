@@ -13,8 +13,10 @@
 ![Demo](demo.gif)
 
 > [!NOTE]
-> **About visual smoothness in the demo:**  
-> The recording uses **SwayFX** with `animation_duration_ms 250`. In Sway, the compositor maps and renders a window surface (`view_map`) before emitting the `window::new` IPC event. Any external daemon can only reorder containers after receiving that event. In vanilla Sway (without animations), you may see a brief 1-frame repositioning step when opening windows. Enabling window animations in SwayFX smooths out this transition.
+> The GIF above shows swayfx with animations on (250 ms). On vanilla sway windows will visibly jump and flick: the daemon drives the layout over IPC, and sway applies every layout change as a discrete transaction - there is no animation layer to interpolate between states. This is sway's own design (a manual resize in plain sway flickers the same way) and it cannot be smoothed from outside the compositor. If the jumping bothers you, run swayfx.
+
+> [!NOTE]
+> Гифка выше показывает swayfx с включёнными анимациями (250 мс). На ванильном sway окна будут заметно дёргаться и мерцать: демон управляет раскладкой через IPC, а sway применяет каждое изменение раскладки дискретной транзакцией - слоя анимаций, который сгладил бы переход, там нет. Это собственный дизайн sway (ручной ресайз в чистом sway дёргается так же), изнутри IPC это не сгладить. Если дёрганье мешает — используйте swayfx.
 
 ---
 
@@ -112,10 +114,6 @@ exec sway-master-stack
 |                        |         45%         |
 +------------------------+---------------------+
 ```
-
-> [!NOTE]
-> **О плавности на видео:**  
-> На записи используется **SwayFX** с анимациями `animation_duration_ms 250`. В Sway композитор сначала мапит и рендерит окно (`view_map`), и лишь затем отправляет событие `window::new` в сокет IPC. Любой внешний демон реагирует уже постфактум. В ванильном Sway (где анимаций нет) при спавне окна может быть заметен скачок в один кадр. Анимации в SwayFX сглаживают это смещение.
 
 ### Возможности
 
