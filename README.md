@@ -31,7 +31,7 @@ A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swayw
 |         Master            |       Stack 2        |
 |                           +----------------------+
 |                           |       Stack 3        |
-|            55%            |         45%          |
+|          55%              |         45%          |
 +---------------------------+----------------------+
 ```
 
