@@ -25,7 +25,6 @@
 A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and [SwayFX](https://github.com/wlrfx/swayfx). 
 
 Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
->>>>>>> d16d46b (update sms v2.0.1)
 
 ```text
 +---------------------------+----------------------+
@@ -50,7 +49,6 @@ Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
 ### Configuration
 
 - `sway-master-stack 60`: master share at launch, range 10 to 90. Default 55/45.
-- `SMS_PCT` environment variable does the same, the command line argument wins.
 
 ### Requirements
 
@@ -99,7 +97,6 @@ exec sway-master-stack 60
 Небольшой демон тайлинга Master-Stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и [SwayFX](https://github.com/wlrfx/swayfx).
 
 Написан на **ISO C23** через нативный сокет Sway IPC (`$SWAYSOCK`) и библиотеку `json-c`.
->>>>>>> d16d46b (update sms v2.0.1)
 
 ```text
 +---------------------------+----------------------+
@@ -124,7 +121,6 @@ exec sway-master-stack 60
 ### Настройка
 
 - `sway-master-stack 60`: доля мастера при запуске, диапазон от 10 до 90. По умолчанию 55/45.
-- Переменная `SMS_PCT` делает то же самое, аргумент командной строки сильнее.
 
 ### Зависимости
 
