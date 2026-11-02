@@ -1,6 +1,6 @@
 # sway-master-stack
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)]()
 [![Standard](https://img.shields.io/badge/C23-ISO%2FIEC%209899%3A2024-00599C.svg)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
 [![Platform](https://img.shields.io/badge/Sway%20%7C%20SwayFX-orange.svg)](https://swaywm.org/)
 [![RAM](https://img.shields.io/badge/RAM-~2MB-brightgreen.svg)]()
@@ -22,7 +22,13 @@
 
 ## English
 
+<<<<<<< HEAD
 A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and [SwayFX](https://github.com/WillPower3309/swayfx). It listens to Sway events over IPC and restores the layout with a single batch of commands. Nothing to add to your Sway config. Written in ISO C23, tested on sway 1.12.
+=======
+A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and [SwayFX](https://github.com/wlrfx/swayfx). 
+
+Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
+>>>>>>> d16d46b (update sms v2.0.1)
 
 ```text
 +---------------------------+----------------------+
@@ -93,7 +99,13 @@ exec sway-master-stack 60
 
 ## Русский
 
+<<<<<<< HEAD
 Небольшой демон тайлинга master/stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и [SwayFX](https://github.com/WillPower3309/swayfx). Он слушает события Sway по IPC и восстанавливает раскладку одной пачкой команд. В конфиг Sway добавлять нечего. Написан на ISO C23, протестирован на sway 1.12.
+=======
+Небольшой демон тайлинга Master-Stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и [SwayFX](https://github.com/wlrfx/swayfx).
+
+Написан на **ISO C23** через нативный сокет Sway IPC (`$SWAYSOCK`) и библиотеку `json-c`.
+>>>>>>> d16d46b (update sms v2.0.1)
 
 ```text
 +---------------------------+----------------------+

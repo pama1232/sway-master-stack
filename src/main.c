@@ -3,8 +3,7 @@
  * Инвариант воркспейса — ровно две зоны:
  *     splith { мастер _m<ws> (M%) | splitv-стопка _s<ws> }
  * Доля мастера выбирается ЗАРАНЕЕ, при запуске: `sms [N]`, N = 10..90 —
- * доля мастера, % (например `sms 60` или `sms 50`); env SMS_PCT — то же
- * самое, аргумент сильнее; дефолт 55/45.
+ * доля мастера, % (например `sms 60` или `sms 50`); дефолт 55/45.
  * Контроль ±3% на каждом ретайле. Ручного ресайза нет.
  *
  * МОДЕЛЬ — как у dwm (сверено с исходниками, git.suckless.org/dwm):
@@ -20,10 +19,12 @@
  *      спавн выглядит нативным тайлингом, окно не мигает на чужом
  *      месте. Контрольный reconcile за пачкой проверяет и долечивает.
  *   2. ЗАКРЫТИЕ МАСТЕРА — верхушка стопки становится мастером И
- *      ПОЛУЧАЕТ ФОКУС (dwm unmanage → focus(NULL)); слепой пачкой
- *      ТОЛЬКО по свежему снимку (гвард workspace в каждой команде).
- *      Мастер был один — фокус остаётся на опустевшем столе: демон
- *      не даёт увести его на другой выход, новое окно родится здесь.
+ *      ПОЛУЧАЕТ ФОКУС — но только если умерший мастер его держал
+ *      (g_focus_win из window::focus): фокус юзера на окне стопки
+ *      не крадём. Слепой пачкой ТОЛЬКО по свежему снимку (гвард
+ *      workspace в каждой команде). Мастер был один — фокус
+ *      остаётся на опустевшем столе: демон не даёт увести его на
+ *      другой выход, новое окно родится здесь.
  *   3. СЫРОЙ move left НА ОКНЕ СТОПКИ (бинды юзера) — ЗУМ: ОДИН свап
  *      с мастером — окно наследует место и геометрию, а бывший
  *      мастер встаёт ТОЧНО на слот зумированного (по снимку порядка;
@@ -37,6 +38,17 @@
  *      «Крайние» движения (верх-вверх / низ-вниз) ломают ws в
  *      splitv — демон чинит за ОДИН раунд реструктуризацией
  *      «move left» (окно — первый ребёнок ws, ws=splith).
+ *      Тот же флип от СЫРОГО move up/down НА МАСТЕРЕ — СВАП с краем
+ *      стопки: вверх — с вершиной, вниз — с дном (точный обмен;
+ *      sway рассыпает стол в плоскость, ПЕРЕВЕРНУВ стопку — пачка
+ *      возвращает ДО-жестовый порядок по снимку/реверсу). Память
+ *      _p — на снятом: move right на новом мастере вернёт всё.
+ *
+ * МЕТКИ (_m/_s/_p/_a): только mark --add и точечный unmark. Метки
+ * глобально уникальны — «mark --add» крадёт метку у прежнего
+ * держателя, не трогая прочие метки окна (юзерские переживают
+ * демон); «--replace», срезающий ВЕСЬ набор меток окна, не
+ * используется вовсе.
  *
  * СНИМОК СТОПКИ: после каждого здорового ретайла (0 команд) демон
  * запоминает порядок стола (мастер + стопка сверху вниз + имя ws).
@@ -57,8 +69,10 @@
  *
  * КЭШ ЭХА: каждая move-команда демона порождает ровно один
  * window::move (замерено; swap/mark/resize — ноль). Демон помнит,
- * кого двигал сам, и глотает эти события БЕЗ пересчёта. После пачки
- * с move-командами — контрольный reconcile.
+ * кого двигал сам, и глотает эти события БЕЗ пересчёта. Записи не
+ * копятся вечно: close окна гасит их (echo_forget), неэхнувшие
+ * стряхивает TTL. После пачки с move-командами — контрольный
+ * reconcile.
  *
  * Плавающие: при рождении/уходе — в центр; их move-события не читаем
  * (плавающие двигает сам sway — нативно).
@@ -67,6 +81,7 @@
  *   -Wformat=2 -Werror=format-security -O2 main.c -ljson-c -o sms
  */
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE 1     /* flock(2) — BSD, вне POSIX */
 
 #include <errno.h>
 #include <inttypes.h>
@@ -77,7 +92,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <poll.h>
+#include <time.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -85,33 +104,51 @@
 #include <json-c/json.h>
 
 /* ══════════════ ТЮНИНГ ══════════════ */
-static int MASTER_PCT = 55;        /* доля мастера, %; env SMS_PCT = 10..90 */
+static int MASTER_PCT = 55;        /* доля мастера, %; `sms N`, N = 10..90 */
 constexpr int PCT_TOLERANCE = 3;
 constexpr int TILED_MAX = 64;
+constexpr int ECHO_MAX = 256;      /* слотов кэша эха наших move-команд */
+constexpr int WSNAME_MAX = 96;     /* имя ws в снимке; длиннее — слепой путь откажется */
+constexpr int GUARD_MAX = 416;     /* критерий: 2 байта на байт имени + обвязка */
+constexpr int ONE_MAX = GUARD_MAX + 192;      /* команда пачки: гвард + con_id + литерал */
+constexpr int FAST_BATCH = ONE_MAX * 6 + 64;  /* слепая пачка — не больше 6 команд */
+constexpr int RETILE_BATCH = 8192; /* буфер пачки retile_ws */
 
 constexpr uint32_t IPC_MAX_LEN = 16u * 1024u * 1024u;
-constexpr uint32_t EV_WORKSPACE = 0x80000000u | 0u; /* focus → трекинг стола */
-constexpr uint32_t EV_WINDOW = 0x80000000u | 3u;
+constexpr uint32_t IPC_EVENT = 0x80000000u;         /* бит события в типе;
+                                                       ответ несёт тип запроса */
+constexpr uint32_t EV_WORKSPACE = IPC_EVENT | 0u;   /* focus → трекинг стола */
+constexpr uint32_t EV_WINDOW = IPC_EVENT | 3u;
 
 enum { RUN_COMMAND = 0, SUBSCRIBE = 2, GET_TREE = 4 };
 
+static bool g_debug = false;        /* SMS_DEBUG — фиксируется один раз в main */
+
+/* Мягкая остановка: SIGTERM/SIGINT — просто выйти (нечего снимать,
+   демон ничего не ставил в конфиге юзера). Читается и EINTR-циклами
+   I/O — не дожидаться кадра на выходе. */
+static volatile sig_atomic_t g_stop = 0;
+static void on_stop(int sig) { (void)sig; g_stop = 1; }
+
 /* ── POSIX I/O: полные циклы, EINTR ── */
 
-[[nodiscard]] static bool write_all(int fd, const void *buf, size_t n) {
-  const char *p = buf;
-  while (n > 0) {
-    ssize_t k = write(fd, p, n);
-    if (k < 0) {
-      if (errno == EINTR)
-        continue;
-      return false;
+[[nodiscard]] static bool write_all(int fd, const void *buf, size_t n)
+{
+    const char *p = buf;
+    while (n > 0) {
+        ssize_t k = write(fd, p, n);
+        if (k < 0) {
+            if (errno == EINTR) {
+                if (g_stop) return false;   /* юзер остановил — бросаем кадр */
+                continue;
+            }
+            return false;
+        }
+        if (k == 0) return false;
+        p += (size_t)k;
+        n -= (size_t)k;
     }
-    if (k == 0)
-      return false;
-    p += (size_t)k;
-    n -= (size_t)k;
-  }
-  return true;
+    return true;
 }
 
 [[nodiscard]] static bool read_all(int fd, void *buf, size_t n)
@@ -120,7 +157,10 @@ enum { RUN_COMMAND = 0, SUBSCRIBE = 2, GET_TREE = 4 };
     while (n > 0) {
         ssize_t k = read(fd, p, n);
         if (k < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (g_stop) return false;
+                continue;
+            }
             return false;
         }
         if (k == 0) return false; /* EOF: sway ушёл */
@@ -153,8 +193,8 @@ enum { RUN_COMMAND = 0, SUBSCRIBE = 2, GET_TREE = 4 };
     if (!read_all(fd, h, 14)) return nullptr;
     memcpy(&len, h + 6, 4);
     memcpy(&t, h + 10, 4);
-    *type = t;
     if (memcmp(h, "i3-ipc", 6) != 0) return nullptr;
+    *type = t;                       /* тип — только валидному кадру */
     if (len > IPC_MAX_LEN) {
         uint8_t sink[4096];
         while (len > 0) {
@@ -249,21 +289,78 @@ static bool has_mark(json_object *n, const char *mark)
     return false;
 }
 
-/* ws, на котором умер держатель _m — из marks закрытого окна; 0 = нет */
-static int64_t dead_master_ws(json_object *con)
+/* ── Гвард стола для слепых пачек: workspace="^имя$" — критерии sway
+   матчатся как PCRE (i3 userguide: «…are actually regular
+   expressions»). Эскейп — РОВНО ОДИН бэкслэш перед не-алнумерическим
+   ASCII-байтом: критерии-парсер sway (criteria.c, unescape) съедает
+   бэкслэш ТОЛЬКО перед кавычкой, остальное PCRE получает как есть
+   (проверено на живом sway 1.10: «\:\ » матчит «: », «\\:» — уже
+   нет). Байты ≥0x80 (UTF-8) — не метасимволы, идут как есть:
+   поштучное эскейпирование разрывало последовательность и валило
+   весь регэксп под PCRE2_UTF — sway молча отвергал пачку. Кавычка
+   имени — «\"», бэкслэш — «\\»; имя, кончающееся на «\», с «\»
+   перед кавычкой или с контроль-байтами — отказ (false = слепой
+   путь молчит, честный путь с get_tree расставит сам): такие хвосты
+   ломают поиск закрывающей кавычки критерия. ── */
+static bool ws_guard(char *out, size_t cap, const char *name)
 {
-    json_object *marks = jarr(con, "marks");
-    if (marks == nullptr) return 0;
-    size_t cnt = json_object_array_length(marks);
-    for (size_t i = 0; i < cnt; i++) {
-        json_object *m = json_object_array_get_idx(marks, i);
-        const char *s = m != nullptr ? json_object_get_string(m) : nullptr;
-        if (s != nullptr && s[0] == '_' && s[1] == 'm') {
-            int64_t v = strtoll(s + 2, nullptr, 10);
-            if (v > 0) return v;
+    if (name == nullptr || name[0] == '\0' || cap < 16) return false;
+    size_t len = strlen(name);
+    if (len > 0 && name[len - 1] == '\\') return false;
+    static const char pre[] = "workspace=\"^";
+    size_t o = sizeof pre - 1;
+    memcpy(out, pre, o);
+    for (const unsigned char *p = (const unsigned char *)name;
+         *p != '\0'; p++) {
+        unsigned char c = *p;
+        if (c < 0x20) return false;             /* контроль-байты */
+        if (c == '\\' && p[1] == '"') return false; /* неоднозначно */
+        bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                     || (c >= '0' && c <= '9') || c >= 0x80;
+        size_t need = alnum ? 1u : 2u;
+        if (o + need + 3u >= cap) return false;   /* «$", NUL */
+        if (alnum) {
+            out[o++] = (char)c;
+        } else {
+            out[o++] = '\\';      /* один уровень: PCRE видит «\c» */
+            out[o++] = (char)c;
         }
     }
-    return 0;
+    out[o++] = '$';
+    out[o++] = '"';
+    out[o] = '\0';
+    return true;
+}
+
+/* ── Удержание фокуса на ПУСТОМ столе: критерии sway матчат только
+   контейнеры (tiling+floating; root_for_each_container в исходниках
+   sway воркспейс-узел кандидатом не делает) — на опустевшем столе
+   `[workspace="…"] focus` всегда даёт «No matching node». Поэтому
+   адресуем стол напрямую: `workspace --no-auto-back-and-forth "имя"`
+   — переключает и на пустой стол, флаг гасит auto_back_and_forth из
+   конфига юзера. Имя — одним токеном в кавычках: резчик пачек «;»
+   кавычки уважает, внешние кавычки парсер снимает, байты ≥0x80
+   проходят как есть. Отказ (false = ничего не посылать): имена,
+   перехватываемые парсером как ключевые слова, и имена с кавычками/
+   бэкслэшем/контроль-байтами — они не переживают парсер. Отказ
+   безвреден: фокус просто не удерживаем. ── */
+static bool ws_focus_cmd(char *out, size_t cap, const char *name)
+{
+    static const char *const kw[] = {
+        "next", "prev", "current", "back_and_forth", "next_on_output",
+        "prev_on_output", "number", "output", "gaps",
+        "--no-auto-back-and-forth", nullptr
+    };
+    if (name == nullptr || name[0] == '\0') return false;
+    for (int k = 0; kw[k] != nullptr; k++)
+        if (strcasecmp(name, kw[k]) == 0) return false;
+    for (const unsigned char *p = (const unsigned char *)name;
+         *p != '\0'; p++)
+        if (*p == '"' || *p == '\'' || *p == '\\' || *p < 0x20)
+            return false;
+    int n = snprintf(out, cap,
+                     "workspace --no-auto-back-and-forth \"%s\"", name);
+    return n > 0 && (size_t)n < cap;
 }
 
 /* ── Сбор тайлов: один DFS, порядок дерева (= визуальный порядок).
@@ -278,7 +375,6 @@ typedef struct {
     int64_t master_id;              /* держатель _m<ws>, -1 = нет */
     int64_t stack_id;               /* держатель _s<ws>, -1 = нет */
     int64_t partner_id;             /* держатель _p<ws> (место возврата), -1 = нет */
-    bool focused_here;              /* внутри ws есть сфокусированный узел */
 } Tiled;
 
 static void collect(json_object *n, json_object *parent,
@@ -286,20 +382,27 @@ static void collect(json_object *n, json_object *parent,
                     const char *mk_p, Tiled *t)
 {
     int64_t id = jint(n, "id");
-    if (!t->focused_here && jbool(n, "focused"))
-        t->focused_here = true;
     if (t->master_id == -1 && has_mark(n, mk_m))
         t->master_id = id;
     if (t->stack_id == -1 && has_mark(n, mk_s))
         t->stack_id = id;
     if (t->partner_id == -1 && has_mark(n, mk_p))
         t->partner_id = id;
-    if (is_tiled(n) && t->n < TILED_MAX) {
-        t->id[t->n] = id;
-        t->parent[t->n] = parent;
-        json_object *r = jget(n, "rect");
-        t->rw[t->n] = (r != nullptr) ? jint(r, "width") : 0;
-        t->n++;
+    if (is_tiled(n)) {
+        if (t->n < TILED_MAX) {
+            t->id[t->n] = id;
+            t->parent[t->n] = parent;
+            json_object *r = jget(n, "rect");
+            t->rw[t->n] = (r != nullptr) ? jint(r, "width") : 0;
+            t->n++;
+        } else {
+            static bool warned = false;   /* одного раза за процесс хватит */
+            if (!warned) {
+                warned = true;
+                fprintf(stderr, "sms: на столе больше %d тайлов — "
+                        "лишние не управляются\n", TILED_MAX);
+            }
+        }
     }
     json_object *nodes = jarr(n, "nodes"); /* floating_nodes не считаем */
     if (nodes == nullptr) return;
@@ -321,53 +424,122 @@ static int idx_of(const Tiled *t, int64_t id)
    наше собственное эхо (одна move-команда = один window::move,
    замерено; swap/mark/resize эха не дают) — глотаем без пересчёта.
    Провалившаяся команда не эхает: застрявший id может ошибочно
-   проглотить ОДИН будущий ход юзера — стол долечит следующий эвент. ── */
+   проглотить ОДИН будущий ход юзера — стол долечит следующий эвент.
+   Чтобы «застрявшие» не копились вечно: close окна гасит его записи
+   (echo_forget), а протухшее echo_consume стряхивает на месте —
+   возраст проверяется при каждом взгляде в кэш, а не только при
+   переполнении: застрявшая запись живого окна не имеет права
+   проглотить ход юзера через час. Эхо приходит за миллисекунды,
+   10с хватает с запасом. ── */
 
-static int64_t echo_ids[TILED_MAX];
+constexpr int64_t ECHO_TTL_MS = 10000;
+
+typedef struct {
+    int64_t id;
+    int64_t t;                      /* now_ms() записи */
+} Echo;
+
+static Echo g_echo[ECHO_MAX];
 static int echo_n = 0;
+
+static int64_t now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void echo_prune(void)
+{
+    int64_t now = now_ms();
+    int w = 0;
+    for (int i = 0; i < echo_n; i++)
+        if (now - g_echo[i].t < ECHO_TTL_MS)
+            g_echo[w++] = g_echo[i];
+    echo_n = w;
+}
 
 static void echo_track(int64_t id)
 {
-    if (id <= 0 || echo_n >= TILED_MAX) return;
-    echo_ids[echo_n++] = id;
+    if (id <= 0) return;
+    if (echo_n >= ECHO_MAX) echo_prune();   /* стряхнуть протухшее */
+    if (echo_n >= ECHO_MAX) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            fprintf(stderr, "sms: переполнение кэша эха (%d) — лишнее "
+                    "эхо даст лишний ретайл, самолечится\n", ECHO_MAX);
+        }
+        return;
+    }
+    g_echo[echo_n].id = id;
+    g_echo[echo_n].t = now_ms();
+    echo_n++;
 }
 
+/* Обход с КОНЦА: swap-remove кладёт последний элемент на место i,
+   прямой цикл его бы пропустил — а записи одного id идут пачками
+   подряд (несколько move по одному окну). Съедаем РОВНО ОДНУ запись
+   (одна команда = одно эхо) и заодно стряхиваем протухшие. */
 static bool echo_consume(int64_t id)
 {
-    for (int i = 0; i < echo_n; i++)
-        if (echo_ids[i] == id) {
-            echo_ids[i] = echo_ids[--echo_n];
-            return true;
+    int64_t now = now_ms();
+    bool hit = false;
+    for (int i = echo_n - 1; i >= 0; i--) {
+        bool stale = now - g_echo[i].t >= ECHO_TTL_MS;
+        bool match = !stale && !hit && g_echo[i].id == id;
+        if (stale || match) {
+            hit |= match;
+            g_echo[i] = g_echo[--echo_n];
         }
-    return false;
+    }
+    return hit;
+}
+
+/* окно умерло — его эха уже не будет, записи гасим; с конца — по той
+   же причине: swap-remove + подряд идущие дубли */
+static void echo_forget(int64_t id)
+{
+    for (int i = echo_n - 1; i >= 0; i--)
+        if (g_echo[i].id == id)
+            g_echo[i] = g_echo[--echo_n];
 }
 
 /* ── Команды: пачка через «;», критерии перед КАЖДОЙ командой ── */
 
-static void cmd_append(char *buf, size_t cap, size_t *off, const char *cmd)
+static bool cmd_append(char *buf, size_t cap, size_t *off, const char *cmd)
 {
     size_t len = strlen(cmd);
-    if (*off + len + 3 >= cap) return;
+    if (*off + len + 3 >= cap) {
+        fprintf(stderr, "sms: команда не влезла в пачку: %s\n", cmd);
+        return false;            /* обрезанная пачка — лучше кричать */
+    }
     if (*off > 0) { buf[(*off)++] = ';'; buf[(*off)++] = ' '; }
     memcpy(buf + *off, cmd, len);
     *off += len;
     buf[*off] = '\0';
+    return true;
 }
 
-/* move-команда: пачка + запоминание эха */
-static void cmd_move(char *buf, size_t cap, size_t *off, const char *cmd,
+/* move-команда: пачка + запоминание эха (только если команда ушла) */
+static bool cmd_move(char *buf, size_t cap, size_t *off, const char *cmd,
                      int64_t id)
 {
-    cmd_append(buf, cap, off, cmd);
+    if (!cmd_append(buf, cap, off, cmd)) return false;
     echo_track(id);
+    return true;
 }
 
 static void send_cmd(int fd, const char *cmd)
 {
-    if (getenv("SMS_DEBUG") != nullptr) fprintf(stderr, "cmd: %s\n", cmd);
+    if (g_debug) fprintf(stderr, "cmd: %s\n", cmd);
     if (!ipc_send(fd, RUN_COMMAND, cmd, strlen(cmd))) return;
     uint32_t type;
-    free(ipc_recv(fd, &type)); /* ответ вычитываем молча, чтобы не рассинхрониться */
+    uint8_t *reply = ipc_recv(fd, &type); /* вычитать обязаны — не рассинхронить сокет */
+    if (g_debug && reply != nullptr)     /* отказы sway (критерий не сматчился)
+                                            иначе не видны вовсе */
+        fprintf(stderr, "reply: %s\n", (const char *)reply);
+    free(reply);
 }
 
 [[nodiscard]] static json_object *get_tree(int fd)
@@ -377,7 +549,7 @@ static void send_cmd(int fd, const char *cmd)
         if (!ipc_send(fd, GET_TREE, nullptr, 0)) return nullptr;
         uint8_t *buf = ipc_recv(fd, &type);
         if (buf == nullptr) return nullptr;
-        if (getenv("SMS_DEBUG") != nullptr) fprintf(stderr, "tree: read\n");
+        if (g_debug) fprintf(stderr, "tree: read\n");
         json_object *tree = json_tokener_parse((const char *)buf);
         free(buf);
         if (tree != nullptr) return tree;
@@ -386,12 +558,18 @@ static void send_cmd(int fd, const char *cmd)
     return nullptr;
 }
 
-/* ── Пропорции: мастер ≈ MASTER_PCT% ширины воркспейса? ── */
+/* ── Пропорции: мастер ≈ MASTER_PCT% зоны тайлинга? База — сумма
+   ширин зон (мастер + контейнер стопки), а НЕ rect воркспейса:
+   rect включает gaps, а «resize set … ppt» считается от контентной
+   области — на конфигах с gaps rect-база расходилась с ppt и гоняла
+   resize на каждом ретайле (снимки тогда не хранятся вовсе). ── */
 
-[[nodiscard]] static bool proportions_ok(const Tiled *t)
+[[nodiscard]] static bool proportions_ok(const Tiled *t, int64_t zone_w)
 {
-    if (t->n < 2 || t->rw[0] <= 0 || t->ws_w <= 0) return true;
-    int pct = (int)((t->rw[0] * 100) / t->ws_w);
+    if (t->n < 2 || t->rw[0] <= 0) return true;
+    int64_t base = (zone_w > 0) ? t->rw[0] + zone_w : t->ws_w;
+    if (base <= 0) return true;
+    int pct = (int)((t->rw[0] * 100) / base);
     return pct >= MASTER_PCT - PCT_TOLERANCE
         && pct <= MASTER_PCT + PCT_TOLERANCE;
 }
@@ -402,9 +580,11 @@ typedef struct {
     int64_t promote;   /* новое окно → мастер; 0 = нет */
     int64_t moved;     /* окно от window::move; 0 = нет */
     int64_t died_ws;   /* ws, где умер держатель _m; 0 = нет */
+    int64_t died_win;  /* умерший держатель _m (для фокуса); 0 = нет */
 } Act;
 
-static const Act ACT_NONE = { .promote = 0, .moved = 0, .died_ws = 0 };
+static const Act ACT_NONE = { .promote = 0, .moved = 0,
+                              .died_ws = 0, .died_win = 0 };
 
 /* ── СНИМОК СТОЛА: последний ЗДОРОВЫЙ порядок (0 команд = снимок
    верен; любая команда — гасит, вернёт контрольный reconcile).
@@ -415,7 +595,7 @@ static const Act ACT_NONE = { .promote = 0, .moved = 0, .died_ws = 0 };
 #define WS_SNAP 16
 typedef struct {
     int64_t ws;                     /* id воркспейса; 0 = слот свободен */
-    char name[64];                  /* имя ws для гварда workspace="…" */
+    char name[WSNAME_MAX];          /* имя ws для гварда workspace="…" */
     int64_t master;                 /* мастер (для слепого спавна) */
     int n;                          /* окон в стопке */
     int64_t stack[TILED_MAX];       /* порядок стопки сверху вниз */
@@ -425,6 +605,9 @@ typedef struct {
 static Snap g_snap[WS_SNAP];
 static uint64_t g_snap_tick = 1;
 static int64_t g_focus_ws = 0;      /* ws сфокусированного окна */
+static int64_t g_focus_win = 0;     /* сфокусированное окно (window::focus):
+                                       смерть мастера отдаёт фокус новому,
+                                       только если умерший его держал */
 
 static Snap *snap_get(int64_t ws)
 {
@@ -455,27 +638,57 @@ static void snap_store(int64_t ws, const char *name, int64_t master,
     for (int i = 0; i < WS_SNAP; i++)
         if (g_snap[i].ws == ws) { s = &g_snap[i]; break; }
     if (s == nullptr) {
-        s = &g_snap[0];              /* свободный слот или LRU-жертва */
-        for (int i = 1; i < WS_SNAP; i++) {
+        for (int i = 0; i < WS_SNAP; i++) {
             if (g_snap[i].ws == 0) { s = &g_snap[i]; break; }
-            if (g_snap[i].tick < s->tick) s = &g_snap[i];
+            if (s == nullptr || g_snap[i].tick < s->tick) s = &g_snap[i];
         }
         s->tick = ++g_snap_tick;
     }
     s->ws = ws;
-    snprintf(s->name, sizeof s->name, "%s",
-             (name != nullptr && name[0] != '\0') ? name : "");
+    /* длинное имя не влезает в гвард — честнее отказаться от слепых
+       путей для этого стола, чем ездить по обрезанному имени */
+    if (name != nullptr && name[0] != '\0'
+        && strlen(name) < sizeof s->name)
+        snprintf(s->name, sizeof s->name, "%s", name);
+    else
+        s->name[0] = '\0';
     s->master = master;
     s->n = n;
     if (n > 0) memcpy(s->stack, stack, (size_t)n * sizeof stack[0]);
 }
 
+/* ws, на котором умер держатель _m — из marks закрытого окна; 0 = нет.
+   После отказа от --replace окно может нести и СТАРЫЕ _m чужих столов
+   (метка уникальна и слезает лишь когда там родится новый мастер):
+   выбираем стол, где ЭТО окно — мастер по снимку, иначе первый. */
+static int64_t dead_master_ws(json_object *con, int64_t cid)
+{
+    json_object *marks = jarr(con, "marks");
+    if (marks == nullptr) return 0;
+    size_t cnt = json_object_array_length(marks);
+    int64_t first = 0;
+    for (size_t i = 0; i < cnt; i++) {
+        json_object *m = json_object_array_get_idx(marks, i);
+        const char *s = m != nullptr ? json_object_get_string(m) : nullptr;
+        if (s != nullptr && s[0] == '_' && s[1] == 'm') {
+            int64_t v = strtoll(s + 2, nullptr, 10);
+            if (v > 0) {
+                Snap *sn = snap_get(v);
+                if (sn != nullptr && sn->master == cid) return v;
+                if (first == 0) first = v;
+            }
+        }
+    }
+    return first;
+}
+
 /* ── Retile: канонический ребилд одного воркспейса.
  * Возвращает: отправлялись ли команды вообще (стол был болен).
- * *moves_out |= в пачке были MOVE-команды (породят эхо + нужен
- * контрольный reconcile). ── */
+ * Любая пачка (даже только метки) гасит снимок — вызывающий путь
+ * обязан прогнать контрольный reconcile: он долечит и засеет
+ * снимки для слепых путей. ── */
 
-static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
+static bool retile_ws(int fd, json_object *ws, const Act *act)
 {
     int64_t wid = jint(ws, "id");
     if (wid <= 0) return false;
@@ -496,26 +709,30 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
         snap_evict(wid);
         /* мастер умер последним — фокус ОСТАЁТСЯ на этом столе:
            некоторые сборки/конфиги sway уводят его на другой выход,
-           а юзер ждёт следующее окно здесь */
-        if (act->died_ws == wid && g_focus_ws == wid) {
-            const char *nm = jstr(ws, "name");
-            if (nm != nullptr && nm[0] != '\0') {
-                char keep[128];
-                snprintf(keep, sizeof keep,
-                         "[workspace=\"^%s$\"] focus", nm);
+           а юзер ждёт следующее окно здесь. НЕ через критерии:
+           `[workspace="…"] focus` на пустом столе матчит ноль
+           контейнеров — только прямая команда `workspace`. Стол
+           обязан быть ещё сфокусирован (g_focus_ws): close
+           асинхронен, юзер мог успеть уйти на пустой стол, а
+           g_focus_win этого не видит — переход на пустой стол не
+           порождает window::focus */
+        if (act->died_ws == wid && g_focus_ws == wid
+            && g_focus_win == act->died_win) {
+            char keep[WSNAME_MAX + 48];
+            if (ws_focus_cmd(keep, sizeof keep, jstr(ws, "name"))) {
                 send_cmd(fd, keep);
                 return true;
             }
         }
         return false;
     }
-    if (getenv("SMS_DEBUG") != nullptr)
+    if (g_debug)
         fprintf(stderr, "retile: ws=%" PRId64 " n=%d p0ws=%d splith=%d "
                 "m=%" PRId64 " mid=%" PRId64 " sid=%" PRId64 "\n",
                 wid, t.n, t.parent[0] == ws, layout_is(ws, "splith"),
                 t.id[0], t.master_id, t.stack_id);
 
-    char buf[8192], one[192];
+    char buf[RETILE_BATCH], one[192];
     size_t off = 0;
     buf[0] = '\0';
 
@@ -533,7 +750,7 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
        реструктуризации недостоверен — остаток доделает reconcile. ═══ */
     if (pi >= 0 && act->moved > 0 && act->moved != t.master_id
         && t.parent[pi] == ws && !layout_is(ws, "splith")) {
-        if (getenv("SMS_DEBUG") != nullptr)
+        if (g_debug)
             fprintf(stderr, "яд: pi=%d n=%d mid=%" PRId64 "\n",
                     pi, t.n, t.master_id);
         if (pi == t.n - 1 && t.master_id > 0) {
@@ -546,24 +763,22 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
                     if (i != pi && t.parent[i] == sc) { sn = i; break; }
             int mi = idx_of(&t, t.master_id);
             if (sn > 0 && mi >= 0 && t.parent[mi] != sc) {
-                if (getenv("SMS_DEBUG") != nullptr)
+                if (g_debug)
                     fprintf(stderr, "яд-T2: сн=%" PRId64 " мастер=%" PRId64 " на дно\n",
                             t.id[sn], t.id[mi]);
                 snprintf(one, sizeof one,
-                         "[con_id=%" PRId64 "] mark --replace %s",
+                         "[con_id=%" PRId64 "] mark --add %s",
                          t.id[sn], mk_s);
                 cmd_append(buf, sizeof buf, &off, one);
                 snprintf(one, sizeof one,
                          "[con_id=%" PRId64 "] move container to mark %s",
                          t.id[mi], mk_s);
                 cmd_move(buf, sizeof buf, &off, one, t.id[mi]);
-                *moves_out = true;
             }
         }
         snprintf(one, sizeof one,
                  "[con_id=%" PRId64 "] move left", t.id[pi]);
         cmd_move(buf, sizeof buf, &off, one, t.id[pi]);
-        *moves_out = true;
         goto finish;
     }
 
@@ -601,7 +816,7 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
             }
         }
         if (who > 0) {
-            if (getenv("SMS_DEBUG") != nullptr)
+            if (g_debug)
                 fprintf(stderr, "демо/возврат: pi=%d ki=%d who=%" PRId64 "%s\n",
                         pi, ki, who, rot ? " ротация" : " возврат");
             if (rot && pi > 0) {
@@ -621,10 +836,13 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
             snprintf(one, sizeof one,
                      "[con_id=%" PRId64 "] move left", who);
             cmd_move(buf, sizeof buf, &off, one, who);
-            *moves_out = true;
             snprintf(one, sizeof one,
-                     "[con_id=%" PRId64 "] mark --replace %s",
-                     who, mk_m);     /* --replace срезает _p партнёра */
+                     "[con_id=%" PRId64 "] mark --add %s",
+                     who, mk_m);     /* крадёт _m у снятого мастера */
+            cmd_append(buf, sizeof buf, &off, one);
+            snprintf(one, sizeof one,
+                     "[con_id=%" PRId64 "] unmark %s",
+                     who, mk_p);     /* стал мастером — память гасим явно */
             cmd_append(buf, sizeof buf, &off, one);
             if (rot) {               /* ротация ставит память */
                 snprintf(one, sizeof one,
@@ -668,7 +886,7 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
             if (wi > 0 && t.parent[wi] != ws) {
                 char mk_a[24];
                 snprintf(mk_a, sizeof mk_a, "_a%" PRId64, wid);
-                if (getenv("SMS_DEBUG") != nullptr)
+                if (g_debug)
                     fprintf(stderr, "точный зум: j=%d над=%" PRId64 "\n",
                             j, sn->stack[j - 1]);
                 snprintf(one, sizeof one,
@@ -676,8 +894,12 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
                          t.id[pi], mk_m);
                 cmd_append(buf, sizeof buf, &off, one);
                 snprintf(one, sizeof one,
-                         "[con_id=%" PRId64 "] mark --replace %s",
+                         "[con_id=%" PRId64 "] mark --add %s",
                          t.id[pi], mk_m);
+                cmd_append(buf, sizeof buf, &off, one);
+                snprintf(one, sizeof one,
+                         "[con_id=%" PRId64 "] unmark %s",
+                         t.id[pi], mk_p);   /* зумированный мог держать _p */
                 cmd_append(buf, sizeof buf, &off, one);
                 snprintf(one, sizeof one,
                          "[con_id=%" PRId64 "] mark --add %s",
@@ -691,7 +913,6 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
                          "[con_id=%" PRId64 "] move container to mark %s",
                          t.master_id, mk_a);
                 cmd_move(buf, sizeof buf, &off, one, t.master_id);
-                *moves_out = true;
                 snprintf(one, sizeof one, "unmark %s", mk_a);
                 cmd_append(buf, sizeof buf, &off, one);
                 goto finish;
@@ -731,7 +952,7 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
        at workspace level»); выжившее после смерти мастера остаётся
        на месте — визуально тот же полный стол, структуру достроит
        следующее событие.
-       Табbed/stacked-тюрьма: move left там — переключение ТАБОВ
+       Tabbed/stacked-тюрьма: move left там — переключение ТАБОВ
        (no-op без эха!) — сначала превращаем её в splitv (layout по
        листу целит в родителя), потом побег. ═══ */
     bool escaped = false;
@@ -748,8 +969,115 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
         cmd_move(buf, sizeof buf, &off, one, t.id[0]);
         t.parent[0] = ws;
         escaped = true;
-        *moves_out = true;
     } else if (t.parent[0] == ws && !layout_is(ws, "splith")) {
+        /* ═══ ФЛИП МАСТЕРА (сырой move up/down на мастере): sway
+           переворачивает ws в splitv и рассыпает стол в плоскость,
+           ПЕРЕВЕРНУВ стопку (замерено: [M,A,B,C] → вверх:
+           [M,C,B,A], вниз: [C,B,A,M]). Жест юзера — СВАП с краем
+           стопки: вверх — с вершиной, вниз — с дном (точный
+           обмен); порядок остальных — как ДО жеста: свежий снимок
+           (если он ровно про этот стол), иначе реверс флипа.
+           Побег в мастер сбрасывает ширину — resize в пачке;
+           контейнер стопки и якорь достроит контрольный reconcile.
+           Память _p — на снятом мастере: move right на новом
+           вернёт всё (инволюция). ═══ */
+        if (act->moved > 0 && act->moved == t.master_id && t.n >= 2) {
+            int mi = idx_of(&t, act->moved);
+            bool fup = (mi == 0);       /* мастер сверху — «вверх» */
+            bool fdn = (mi == t.n - 1); /* мастер снизу — «вниз» */
+            if (fup || fdn) {
+                int64_t pre[TILED_MAX]; /* стопка ДО жеста: [0] — верх */
+                int pn = 0;
+                Snap *sn = snap_get(wid);
+                bool sok = sn != nullptr && sn->n == t.n - 1
+                           && sn->master == act->moved;
+                if (sok)
+                    for (int i = 0; i < sn->n; i++)
+                        if (idx_of(&t, sn->stack[i]) < 0) {
+                            sok = false;
+                            break;
+                        }
+                if (sok) {
+                    for (int i = 0; i < sn->n; i++)
+                        pre[pn++] = sn->stack[i];
+                } else {
+                    /* флипнутые дети без мастера — в порядке флипа;
+                       разворот возвращает ДО-жестовый порядок */
+                    int64_t flip[TILED_MAX];
+                    int fn = 0;
+                    for (int i = 0; i < t.n; i++)
+                        if (t.id[i] != act->moved)
+                            flip[fn++] = t.id[i];
+                    for (int i = fn - 1; i >= 0; i--)
+                        pre[pn++] = flip[i];
+                }
+                int64_t who = fup ? pre[0] : pre[pn - 1];
+                if (idx_of(&t, who) >= 0) {
+                    /* якорь-вершина новой стопки: вверх — снятый
+                       мастер, вниз — бывшая вершина (снятый встаёт
+                       дном: вставляется за якорем первым) */
+                    int64_t anch = fup ? act->moved
+                              : (pn >= 2 ? pre[0] : act->moved);
+                    if (g_debug)
+                        fprintf(stderr,
+                                "флип мастера: %s, в мастер %" PRId64 "\n",
+                                fup ? "вверх" : "вниз", who);
+                    snprintf(one, sizeof one,
+                             "[con_id=%" PRId64 "] move left", who);
+                    cmd_move(buf, sizeof buf, &off, one, who);
+                    snprintf(one, sizeof one,
+                             "[con_id=%" PRId64 "] mark --add %s",
+                             who, mk_m);  /* крадёт _m у снятого */
+                    cmd_append(buf, sizeof buf, &off, one);
+                    snprintf(one, sizeof one,
+                             "[con_id=%" PRId64 "] unmark %s",
+                             who, mk_p);
+                    cmd_append(buf, sizeof buf, &off, one);
+                    if (t.partner_id > 0 && t.partner_id != act->moved
+                        && t.partner_id != who) {
+                        snprintf(one, sizeof one,
+                                 "[con_id=%" PRId64 "] unmark %s",
+                                 t.partner_id, mk_p);
+                        cmd_append(buf, sizeof buf, &off, one);
+                    }
+                    snprintf(one, sizeof one,
+                             "[con_id=%" PRId64 "] mark --add %s",
+                             act->moved, mk_p);  /* память возврата */
+                    cmd_append(buf, sizeof buf, &off, one);
+                    snprintf(one, sizeof one,
+                             "[con_id=%" PRId64 "] mark --add %s",
+                             anch, mk_s);
+                    cmd_append(buf, sizeof buf, &off, one);
+                    if (fup) {   /* снятый — вершина: [M, S1..Sk] */
+                        for (int i = pn - 1; i >= 1; i--) {
+                            snprintf(one, sizeof one,
+                                     "[con_id=%" PRId64 "] move container to mark %s",
+                                     pre[i], mk_s);
+                            cmd_move(buf, sizeof buf, &off, one, pre[i]);
+                        }
+                    } else {     /* снятый — дно: [S0..Sk-1, M] */
+                        if (anch != act->moved) {
+                            snprintf(one, sizeof one,
+                                     "[con_id=%" PRId64 "] move container to mark %s",
+                                     act->moved, mk_s);
+                            cmd_move(buf, sizeof buf, &off, one,
+                                     act->moved);
+                        }
+                        for (int i = pn - 2; i >= 1; i--) {
+                            snprintf(one, sizeof one,
+                                     "[con_id=%" PRId64 "] move container to mark %s",
+                                     pre[i], mk_s);
+                            cmd_move(buf, sizeof buf, &off, one, pre[i]);
+                        }
+                    }
+                    snprintf(one, sizeof one,
+                             "[con_id=%" PRId64 "] resize set width %d ppt",
+                             who, MASTER_PCT);
+                    cmd_append(buf, sizeof buf, &off, one);
+                    goto finish;
+                }
+            }
+        }
         /* ═══ РЕСТРУКТУРИЗАЦИЯ: мастер УЖЕ на уровне ws, но ws не
            splith (пережиток чужого layout/яда без movers) — тот же
            «move left»: встанет первым, ws=splith. Снимок дальше
@@ -757,14 +1085,13 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
         snprintf(one, sizeof one,
                  "[con_id=%" PRId64 "] move left", t.id[0]);
         cmd_move(buf, sizeof buf, &off, one, t.id[0]);
-        *moves_out = true;
         goto finish;
     }
 
     int64_t m = t.id[0];
     if (t.master_id != m) {
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 "] mark --replace %s", m, mk_m);
+                 "[con_id=%" PRId64 "] mark --add %s", m, mk_m);
         cmd_append(buf, sizeof buf, &off, one);
         /* сменился мастер (НЕ нашим зумом/демо) — память возврата _p
            недействительна: место держит окно, занявшее место ДРУГОГО */
@@ -804,8 +1131,10 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
     }
 
     if (t.stack_id != a) {
+        /* --add: крадёт _s у старого держателя, не срезая _p/юзерские
+           метки якоря (срез --replace губил память сразу после зума) */
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 "] mark --replace %s", a, mk_s);
+                 "[con_id=%" PRId64 "] mark --add %s", a, mk_s);
         cmd_append(buf, sizeof buf, &off, one);
     }
     if (flat) {
@@ -831,7 +1160,6 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
                  "[con_id=%" PRId64 "] move container to mark %s",
                  t.id[i], mk_s);
         cmd_move(buf, sizeof buf, &off, one, t.id[i]);
-        *moves_out = true;
     }
 
     /* ═══ СНЯТЫЙ МАСТЕР — ВЕРШИНА СТОПКИ (dwm: старый head → clients[1]).
@@ -846,10 +1174,16 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
                          "[con_id=%" PRId64 "] move container to mark %s",
                          displaced, mk_s);
                 cmd_move(buf, sizeof buf, &off, one, displaced);
-                *moves_out = true;
             }
             snprintf(one, sizeof one,
                      "[con_id=%" PRId64 "] swap container with mark %s",
+                     displaced, mk_s);
+            cmd_append(buf, sizeof buf, &off, one);
+            /* снятый теперь вершина = якорь: переметить _s сразу,
+               чтобы контрольный раунд не трогал метки вовсе (и не
+               рисковал свежепоставленную _p зума) */
+            snprintf(one, sizeof one,
+                     "[con_id=%" PRId64 "] mark --add %s",
                      displaced, mk_s);
             cmd_append(buf, sizeof buf, &off, one);
             if (zoomed) {
@@ -863,7 +1197,12 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
 
     /* пропорция: свап несёт геометрию с собой, побег — сбрасывает
        в 50/50; в обоих случаях слот 0 должен стать M% */
-    if (escaped || !proportions_ok(&t)) {
+    int64_t zone_w = 0;             /* ширина контейнера стопки */
+    if (!flat) {
+        json_object *zr = jget(ac, "rect");
+        if (zr != nullptr) zone_w = jint(zr, "width");
+    }
+    if (escaped || !proportions_ok(&t, zone_w)) {
         snprintf(one, sizeof one,
                  "[con_id=%" PRId64 "] resize set width %d ppt",
                  m, MASTER_PCT);
@@ -871,9 +1210,15 @@ static bool retile_ws(int fd, json_object *ws, const Act *act, bool *moves_out)
     }
 
 finish:
-    /* ═══ СМЕРТЬ МАСТЕРА: фокус — новому мастеру. Sway сам фокусирует
-       ДНО стопки (замерено) — подсветка не попадает на мастера. ═══ */
-    if (act->died_ws == wid && t.focused_here) {
+    /* ═══ СМЕРТЬ МАСТЕРА: фокус — новому мастеру, и ТОЛЬКО когда
+       умерший мастер его держал (g_focus_win из window::focus; иначе
+       крадём фокус у юзера, сидящего на окне стопки) И юзер ещё на
+       этом столе (g_focus_ws): close асинхронен, юзер мог успеть
+       уйти, а focus на окне невидимого стола переключает стол.
+       Sway сам фокусирует ДНО стопки (замерено) — подсветка не
+       попадает на мастера. ═══ */
+    if (act->died_ws == wid && act->died_win > 0
+        && g_focus_ws == wid && g_focus_win == act->died_win) {
         snprintf(one, sizeof one,
                  "[con_id=%" PRId64 "] focus", t.id[0]);
         cmd_append(buf, sizeof buf, &off, one);
@@ -888,36 +1233,35 @@ finish:
     return off > 0;
 }
 
-static bool retile_all(int fd, json_object *n, const Act *act, bool *moves_out)
+static bool retile_all(int fd, json_object *n, const Act *act)
 {
     bool any = false;
     const char *type = jstr(n, "type");
     if (type != nullptr && strcmp(type, "workspace") == 0)
-        return retile_ws(fd, n, act, moves_out); /* воркспейсы не вложены */
+        return retile_ws(fd, n, act); /* воркспейсы не вложены */
     json_object *nodes = jarr(n, "nodes");
     if (nodes == nullptr) return false;
     size_t cnt = json_object_array_length(nodes);
     for (size_t i = 0; i < cnt; i++)
-        any |= retile_all(fd, json_object_array_get_idx(nodes, i), act, moves_out);
+        any |= retile_all(fd, json_object_array_get_idx(nodes, i), act);
     return any;
 }
 
-/* ── Контрольный reconcile: после пачки с move-командами перечитать
-   истинное состояние и доделать/проверить (максимум 2 раунда).
-   Слепые перехваты передают сюда свой act — промоушен/смерть
-   доводятся до конца, даже если пачка промолчала (чужой стол). ── */
+/* ── Контрольный reconcile: после любой пачки перечитать истинное
+   состояние и доделать/проверить (максимум 2 раунда). Слепые
+   перехваты передают сюда свой act — промоушен/смерть доводятся
+   до конца, даже если пачка промолчала (чужой стол). ── */
 
 static void reconcile_act(int fd, const Act *act)
 {
     for (int i = 0; i < 2; i++) {
         json_object *tree = get_tree(fd);
         if (tree == nullptr) return;
-        bool mv = false;
-        bool any = retile_all(fd, tree, act, &mv);
+        bool any = retile_all(fd, tree, act);
         json_object_put(tree);
-        if (getenv("SMS_DEBUG") != nullptr)
-            fprintf(stderr, "reconcile: раунд %d, команды=%d, moves=%d\n",
-                    i, any ? 1 : 0, mv ? 1 : 0);
+        if (g_debug)
+            fprintf(stderr, "reconcile: раунд %d, команды=%d\n",
+                    i, any ? 1 : 0);
         if (!any) break;    /* чистый круг — снимки свежие, хватит */
     }
 }
@@ -944,46 +1288,49 @@ static bool spawn_fast(int fd, int64_t nid)
     Snap *e = snap_get(g_focus_ws);
     if (e == nullptr || e->master <= 0 || e->name[0] == '\0')
         return false;                /* нет свежего снимка — честный путь */
+    char g[GUARD_MAX];
+    if (!ws_guard(g, sizeof g, e->name))
+        return false;                /* имя не экранируется — честный путь */
     char mk_m[24], mk_s[24], mk_p[24];
     snprintf(mk_m, sizeof mk_m, "_m%" PRId64, g_focus_ws);
     snprintf(mk_s, sizeof mk_s, "_s%" PRId64, g_focus_ws);
     snprintf(mk_p, sizeof mk_p, "_p%" PRId64, g_focus_ws);
 
-    char buf[640], one[224];
+    char buf[FAST_BATCH], one[ONE_MAX];
     size_t off = 0;
     buf[0] = '\0';
     snprintf(one, sizeof one,
-             "[con_id=%" PRId64 " workspace=\"^%s$\" tiling] swap container with mark %s",
-             nid, e->name, mk_m);
+             "[con_id=%" PRId64 " %s tiling] swap container with mark %s",
+             nid, g, mk_m);
     cmd_append(buf, sizeof buf, &off, one);
     snprintf(one, sizeof one,
-             "[con_id=%" PRId64 " workspace=\"^%s$\" tiling] mark --replace %s",
-             nid, e->name, mk_m);
+             "[con_id=%" PRId64 " %s tiling] mark --add %s",
+             nid, g, mk_m);
     cmd_append(buf, sizeof buf, &off, one);
     /* спавн — смена мастера «со стороны»: память возврата гасим */
     snprintf(one, sizeof one, "[con_mark=%s] unmark %s", mk_p, mk_p);
     cmd_append(buf, sizeof buf, &off, one);
     if (e->n >= 1) {                 /* стопка жива: снятый — вершина */
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] move container to mark %s",
-                 e->master, e->name, mk_s);
+                 "[con_id=%" PRId64 " %s] move container to mark %s",
+                 e->master, g, mk_s);
         cmd_move(buf, sizeof buf, &off, one, e->master);
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] swap container with mark %s",
-                 e->master, e->name, mk_s);
+                 "[con_id=%" PRId64 " %s] swap container with mark %s",
+                 e->master, g, mk_s);
         cmd_append(buf, sizeof buf, &off, one);
-        /* якорная метка — на нового верховика стопки */
+        /* якорная метка — на снятого мастера (нового верховика) */
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] mark --replace %s",
-                 e->master, e->name, mk_s);
+                 "[con_id=%" PRId64 " %s] mark --add %s",
+                 e->master, g, mk_s);
         cmd_append(buf, sizeof buf, &off, one);
     }
-    if (getenv("SMS_DEBUG") != nullptr)
+    if (g_debug)
         fprintf(stderr, "spawn-fast: ws=%" PRId64 " окно=%" PRId64 "\n",
                 g_focus_ws, nid);
     send_cmd(fd, buf);
     snap_evict(g_focus_ws);
-    Act act = { .promote = nid, .moved = 0, .died_ws = 0 };
+    Act act = { .promote = nid, .moved = 0, .died_ws = 0, .died_win = 0 };
     reconcile_act(fd, &act);
     return true;
 }
@@ -999,68 +1346,78 @@ static bool spawn_fast(int fd, int64_t nid)
    ВЫХОД (i3: «treat singleton children as if at workspace level»
    → container_move_to_next_output) — у юзера монитор слева уносил
    выжившее окно к себе. Выжившее и так на весь стол: только метка
-   мастера (+фокус, если юзер здесь); канон достроит следующий
-   спавн/зом. Снимка нет / имя пусто / мастер был один — честный
+   мастера (+фокус, если умерший мастер его держал); канон достроит
+   следующий спавн/зом. Снимка нет / имя пусто / мастер был один — честный
    путь с get_tree. Слепые команды по ГОЛОЙ метке _s запрещены
    (метка могла уехать с окном на другой стол — драг). ── */
 
-static bool death_fast(int fd, int64_t wsid)
+static bool death_fast(int fd, int64_t wsid, int64_t dead_id)
 {
     if (wsid <= 0) return false;
     Snap *e = snap_get(wsid);
     if (e == nullptr || e->n < 1 || e->name[0] == '\0')
         return false;     /* нет снимка / мастер был один — честный путь */
+    char g[GUARD_MAX];
+    if (!ws_guard(g, sizeof g, e->name))
+        return false;     /* имя не экранируется — честный путь */
     char mk_m[24], mk_s[24], mk_p[24];
     snprintf(mk_m, sizeof mk_m, "_m%" PRId64, wsid);
     snprintf(mk_s, sizeof mk_s, "_s%" PRId64, wsid);
     snprintf(mk_p, sizeof mk_p, "_p%" PRId64, wsid);
 
-    char buf[640], one[224];
+    char buf[FAST_BATCH], one[ONE_MAX];
     size_t off = 0;
     buf[0] = '\0';
     int64_t top = e->stack[0];
     if (e->n >= 2) {                 /* стопка жива: верхушка — в мастер */
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] move left",
-                 top, e->name);
+                 "[con_id=%" PRId64 " %s] move left", top, g);
         cmd_move(buf, sizeof buf, &off, one, top);
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] mark --replace %s",
-                 top, e->name, mk_m);
+                 "[con_id=%" PRId64 " %s] mark --add %s",
+                 top, g, mk_m);
         cmd_append(buf, sizeof buf, &off, one);
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] resize set width %d ppt",
-                 top, e->name, MASTER_PCT);
+                 "[con_id=%" PRId64 " %s] resize set width %d ppt",
+                 top, g, MASTER_PCT);
         cmd_append(buf, sizeof buf, &off, one);
         /* якорная метка — на нового верховика стопки */
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] mark --replace %s",
-                 e->stack[1], e->name, mk_s);
+                 "[con_id=%" PRId64 " %s] mark --add %s",
+                 e->stack[1], g, mk_s);
         cmd_append(buf, sizeof buf, &off, one);
     } else {
         /* ПОСЛЕДНЕЕ окно стопки: НЕ ДВИГАЕМ — move left на синглтоне
            (i3-семантика новых sway) = ВАРП НА СОСЕДНИЙ ВЫХОД. Только
-           метка мастера; выжившее и так на весь стол, канон достроит
-           следующий спавн/зом */
+           метка мастера (и снять якорь: мастер не держит _s);
+           выжившее и так на весь стол, канон достроит следующий спавн */
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] mark --replace %s",
-                 top, e->name, mk_m);
+                 "[con_id=%" PRId64 " %s] mark --add %s",
+                 top, g, mk_m);
+        cmd_append(buf, sizeof buf, &off, one);
+        snprintf(one, sizeof one,
+                 "[con_id=%" PRId64 " %s] unmark %s",
+                 top, g, mk_s);
         cmd_append(buf, sizeof buf, &off, one);
     }
     snprintf(one, sizeof one, "[con_mark=%s] unmark %s", mk_p, mk_p);
     cmd_append(buf, sizeof buf, &off, one);
-    if (g_focus_ws == wsid) {        /* юзер здесь — подсветить мастера */
+    /* фокус был на умершем мастере И юзер ещё на этом столе —
+       подсветить нового; иначе не крадём (g_focus_win не гасится
+       уходом на пустой стол: нет window::focus, а focus на окне
+       невидимого стола переключил бы стол юзера) */
+    if (g_focus_ws == wsid && g_focus_win == dead_id) {
         snprintf(one, sizeof one,
-                 "[con_id=%" PRId64 " workspace=\"^%s$\"] focus",
-                 top, e->name);
+                 "[con_id=%" PRId64 " %s] focus", top, g);
         cmd_append(buf, sizeof buf, &off, one);
     }
-    if (getenv("SMS_DEBUG") != nullptr)
+    if (g_debug)
         fprintf(stderr, "death-fast: ws=%" PRId64 "\n", wsid);
     send_cmd(fd, buf);
     snap_evict(wsid);
-    /* фокус уже в пачке (если юзер здесь) — reconcile без акта смерти:
-       иначе каждый круг повторял бы focus и снимки не сохранились бы */
+    /* фокус уже в пачке (если умерший мастер его держал) — reconcile
+       без акта смерти: иначе каждый круг повторял бы focus и снимки
+       не сохранились бы */
     reconcile(fd);
     return true;
 }
@@ -1079,8 +1436,9 @@ static bool death_fast(int fd, int64_t wsid)
    тайловым мастером, а ни в чём не повинное окно стопки вылетало
    в floating (жалоба: «выкидывает одно окно в floating»).
 
-   Алгоритм: вычитать всё, что уже в буфере (не блокируя); если
-   мало — до 3×1мс подождать. floating-для-новичка → ПЛАВАЮЩИЙ
+   Алгоритм: сперва ОЧЕРЕДЬ (события, вычитанные чужим вердиктом,
+   в сокет не вернутся), затем всё, что уже в буфере (не блокируя);
+   если мало — до 3×1мс подождать. floating-для-новичка → ПЛАВАЮЩИЙ
    (пачку не шлём вовсе; само событие floating встаёт в очередь и
    его штатный обработчик делает «move position center» + reconcile).
    close-для-новичка → окно умерло (смерть разрулит штатный close из
@@ -1101,22 +1459,59 @@ static int      g_pend_n = 0;
 
 static void pend_push(uint32_t type, const char *payload)
 {
+    /* переполнения не бывает: spawn_drain видит полную очередь и
+       перестаёт вычитать — события ждут в сокете и НЕ теряются.
+       Страховка ниже — только на случай нарушения инварианта. */
     if (payload == nullptr) return;
-    if (g_pend_n >= PEND_MAX) {       /* переполнение теоретическое:
-                                         жертвуем самым старым — цикл
-                                         дочитает живое из сокета */
-        free(g_pend[0]);
-        memmove(g_pend, g_pend + 1,
-                (size_t)(PEND_MAX - 1) * sizeof g_pend[0]);
-        memmove(g_pend_type, g_pend_type + 1,
-                (size_t)(PEND_MAX - 1) * sizeof g_pend_type[0]);
-        g_pend_n = PEND_MAX - 1;
+    if (g_pend_n >= PEND_MAX) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            fprintf(stderr, "sms: очередь подглядываний переполнена — "
+                    "событие потеряно (не должно случаться)\n");
+        }
+        return;
     }
     char *dup = strdup(payload);
     if (dup == nullptr) return;
     g_pend[g_pend_n] = dup;
     g_pend_type[g_pend_n] = type;
     g_pend_n++;
+}
+
+/* Вердикт одного события окна для новичка nid; -1 = не о нём. */
+static int event_verdict(const char *payload, int64_t nid)
+{
+    int v = -1;
+    json_object *ev = json_tokener_parse(payload);
+    if (ev != nullptr) {
+        const char *ch = jstr(ev, "change");
+        json_object *con = jget(ev, "container");
+        int64_t id = (con != nullptr) ? jint(con, "id") : -1;
+        if (ch != nullptr && id == nid) {
+            if (strcmp(ch, "floating") == 0 && is_floating(con))
+                v = SV_FLOAT;
+            else if (strcmp(ch, "close") == 0)
+                v = SV_DEAD;
+            else if (strcmp(ch, "focus") == 0)
+                v = SV_TILED;  /* критерии отработали — не всплыло */
+        }
+        json_object_put(ev);
+    }
+    return v;
+}
+
+/* Вердикт по ОЧЕРЕДИ: floating/focus новичка могли быть вычитаны из
+   сокета РАНЬШЕ (чужим вердиктом) и лежать в g_pend — spawn_drain
+   их уже не увидит, а именно они решают дело. */
+static int pend_verdict(int64_t nid)
+{
+    for (int i = 0; i < g_pend_n; i++) {
+        if (g_pend_type[i] != EV_WINDOW) continue;
+        int v = event_verdict(g_pend[i], nid);
+        if (v >= 0) return v;
+    }
+    return -1;
 }
 
 /* вычитать доступное без блокировки; -1 = вердикта в буфере нет */
@@ -1127,29 +1522,16 @@ static int spawn_drain(int sub_fd, int64_t nid)
     pf.fd = sub_fd;
     pf.events = POLLIN;
     for (;;) {
+        if (g_pend_n >= PEND_MAX) break;  /* очередь полна — НЕ вычитываем:
+                                             событие останется в сокете и
+                                             дождётся освобождения */
         pf.revents = 0;
         if (poll(&pf, 1, 0) <= 0 || !(pf.revents & POLLIN)) break;
         uint32_t type;
         uint8_t *payload = ipc_recv(sub_fd, &type);
         if (payload == nullptr) break;    /* sway умер — цикл увидит EOF */
-        int v = -1;
-        if (type == EV_WINDOW) {
-            json_object *ev = json_tokener_parse((const char *)payload);
-            if (ev != nullptr) {
-                const char *ch = jstr(ev, "change");
-                json_object *con = jget(ev, "container");
-                int64_t id = (con != nullptr) ? jint(con, "id") : -1;
-                if (ch != nullptr && id == nid) {
-                    if (strcmp(ch, "floating") == 0 && is_floating(con))
-                        v = SV_FLOAT;
-                    else if (strcmp(ch, "close") == 0)
-                        v = SV_DEAD;
-                    else if (strcmp(ch, "focus") == 0)
-                        v = SV_TILED;  /* критерии отработали — не всплыло */
-                }
-                json_object_put(ev);
-            }
-        }
+        int v = (type == EV_WINDOW)
+                    ? event_verdict((const char *)payload, nid) : -1;
         pend_push(type, (const char *)payload);  /* само событие — в
                                                     очередь, разберёт
                                                     штатный обработчик */
@@ -1161,7 +1543,9 @@ static int spawn_drain(int sub_fd, int64_t nid)
 
 static int spawn_verdict(int sub_fd, int64_t nid)
 {
-    int v = spawn_drain(sub_fd, nid);
+    /* очередь «старее» сокета — вердикт ищем сперва там */
+    int v = pend_verdict(nid);
+    if (v < 0) v = spawn_drain(sub_fd, nid);
     if (v >= 0) goto out;
     /* грация: sway дописывает floating/focus того же view_map —
        микросекунды; 3×1мс с запасом, кадр (16мс) не страдает */
@@ -1177,7 +1561,7 @@ static int spawn_verdict(int sub_fd, int64_t nid)
     }
     v = SV_TILED;
 out:
-    if (getenv("SMS_DEBUG") != nullptr)
+    if (g_debug)
         fprintf(stderr, "spawn-verdict: окно=%" PRId64 " → %s\n", nid,
                 v == SV_FLOAT ? "плавающий" : v == SV_DEAD ? "умер" : "тайловый");
     return v;
@@ -1191,15 +1575,16 @@ static void handle_event(int sub_fd, int cmd_fd, const char *payload)
     json_object *ev = json_tokener_parse(payload);
     if (ev == nullptr) return;
 
-    Act act = { .promote = 0, .moved = 0, .died_ws = 0 };
+    Act act = { .promote = 0, .moved = 0, .died_ws = 0, .died_win = 0 };
     bool need_retile = false;
     bool need_center  = false;
+    bool closed       = false;
     int64_t cid = -1;
     const char *change = jstr(ev, "change");
     json_object *con = jget(ev, "container");
     if (con != nullptr) cid = jint(con, "id");
 
-    if (getenv("SMS_DEBUG") != nullptr && change != nullptr)
+    if (g_debug && change != nullptr)
         fprintf(stderr, "ev: %s id=%" PRId64 "\n", change, cid);
 
     if (change != nullptr) {
@@ -1226,15 +1611,15 @@ static void handle_event(int sub_fd, int cmd_fd, const char *payload)
                 }
             }
         } else if (strcmp(change, "close") == 0) {
+            echo_forget(cid);      /* мёртвое окно не эхает — хвост гасим */
             if (!is_floating(con)) {
-                int64_t dws = dead_master_ws(con); /* 0 = умер не мастер */
-                if (dws > 0 && death_fast(cmd_fd, dws)) {
-                    json_object_put(ev);
-                    return;
-                }
-                need_retile = true;
+                int64_t dws = dead_master_ws(con, cid); /* 0 = не мастер */
                 act.died_ws = dws;
+                act.died_win = (dws > 0) ? cid : 0;
+                bool fast = dws > 0 && death_fast(cmd_fd, dws, cid);
+                if (!fast) need_retile = true;   /* слепая не прошла — канон */
             }
+            closed = true;
         } else if (strcmp(change, "floating") == 0) {
             if (is_floating(con)) { need_center = true; need_retile = true; }
             else need_retile = true;
@@ -1246,6 +1631,10 @@ static void handle_event(int sub_fd, int cmd_fd, const char *payload)
                 }
                 need_retile = true; act.moved = cid;
             }
+        } else if (strcmp(change, "focus") == 0) {
+            /* фокусное окно: смерть мастера отдаёт фокус новому мастеру
+               ТОЛЬКО если умерший его держал — иначе крадём у юзера */
+            if (cid > 0) g_focus_win = cid;
         }
     }
 
@@ -1258,14 +1647,16 @@ static void handle_event(int sub_fd, int cmd_fd, const char *payload)
     if (need_retile) {
         json_object *tree = get_tree(cmd_fd);
         if (tree != nullptr) {
-            bool mv = false;
-            bool any = retile_all(cmd_fd, tree, &act, &mv);
+            bool any = retile_all(cmd_fd, tree, &act);
             json_object_put(tree);
             /* пачка была (даже только метки) — контрольный reconcile:
                долечить и обновить снимки для слепых путей */
             if (any) reconcile(cmd_fd);
         }
     }
+    if (closed && g_focus_win == cid)
+        g_focus_win = 0;   /* окно закрыто: фокус уводит sway или наша
+                              пачка «focus мастеру» — хвост не копим */
     json_object_put(ev);
 }
 
@@ -1282,21 +1673,27 @@ static void handle_ws_event(int cmd_fd, const char *payload)
         json_object *cur = jget(ev, "current");
         int64_t id = (cur != nullptr) ? jint(cur, "id") : 0;
         if (id > 0) g_focus_ws = id;
-        if (getenv("SMS_DEBUG") != nullptr)
+        if (g_debug)
             fprintf(stderr, "ws: focus=%" PRId64 "\n", g_focus_ws);
     }
     json_object_put(ev);
 }
 
-/* ── Сфокусированный лист (тайл или плавающее) + его воркспейс ── */
+/* ── Сфокусированный лист (тайл или плавающее) + его воркспейс;
+   пустой сфокусированный стол отдаёт сам узел ws (focused:true) ── */
 
 static json_object *find_focused(json_object *n, json_object *ws,
                                  json_object **ws_out)
 {
     const char *type = jstr(n, "type");
-    if (type != nullptr && strcmp(type, "workspace") == 0)
+    if (type != nullptr && strcmp(type, "workspace") == 0) {
         ws = n;
-    else if (type != nullptr
+        /* семя g_focus_ws для ПУСТОГО сфокусированного стола — иначе
+           слепые пути мертвы до первого workspace::focus; лист,
+           найденный ниже, всегда главнее (и это тот же стол) */
+        if (*ws_out == nullptr && jbool(n, "focused"))
+            *ws_out = n;
+    } else if (type != nullptr
              && (strcmp(type, "con") == 0
                  || strcmp(type, "floating_con") == 0)) {
         /* плавающие в get_tree имеют type "floating_con"! */
@@ -1347,6 +1744,7 @@ static json_object *find_focused(json_object *n, json_object *ws,
     uint32_t type;
     uint8_t *reply = ipc_recv(fd, &type);
     if (reply == nullptr) return false;
+    if (type != SUBSCRIBE) { free(reply); return false; }  /* ответ несёт тип запроса */
     json_object *obj = json_tokener_parse((const char *)reply);
     free(reply);
     if (obj == nullptr) return false;
@@ -1356,11 +1754,31 @@ static json_object *find_focused(json_object *n, json_object *ws,
     return ok;
 }
 
-/* ── Мягкая остановка: SIGTERM/SIGINT — просто выйти (нечего снимать,
-   демон ничего не ставил в конфиге юзера) ── */
+/* ── Единственный экземпляр: два демона дрались бы за одни метки
+   и гоняли пачки друг другу. flock держим до конца процесса. ── */
 
-static volatile sig_atomic_t g_stop = 0;
-static void on_stop(int sig) { (void)sig; g_stop = 1; }
+static int g_lock_fd = -1;
+
+[[nodiscard]] static bool grab_lock(void)
+{
+    char path[384];
+    const char *dir = getenv("XDG_RUNTIME_DIR");
+    if (dir != nullptr && dir[0] != '\0' && strlen(dir) < sizeof path - 32)
+        snprintf(path, sizeof path, "%s/sms.lock", dir);
+    else
+        snprintf(path, sizeof path, "/tmp/sms-%d.lock", (int)getuid());
+    /* O_NOFOLLOW: запасной путь в /tmp — чужой симлинк не подменит
+       цель и не подсунет занятый кем-то лок (ELOOP — работаем без
+       лока, как при любой ошибке open) */
+    int fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0) return true;          /* лок не открылся — работаем без него */
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        return false;                 /* живёт другой экземпляр */
+    }
+    g_lock_fd = fd;
+    return true;
+}
 
 int main(int argc, char **argv)
 {
@@ -1373,15 +1791,9 @@ int main(int argc, char **argv)
     sigaction(SIGTERM, &sa, nullptr);
     sigaction(SIGINT, &sa, nullptr);
 
-    /* пропорция выбирается ЗАРАНЕЕ, до старта: env SMS_PCT (10..90) */
-    const char *pct = getenv("SMS_PCT");
-    if (pct != nullptr && pct[0] != '\0') {
-        int v = atoi(pct);
-        if (v >= 10 && v <= 90)
-            MASTER_PCT = v;
-    }
+    g_debug = getenv("SMS_DEBUG") != nullptr;
 
-    /* CLI сильнее env: `sms N`, N = 10..90 — доля мастера, %.
+    /* пропорция выбирается ЗАРАНЕЕ, до старта: `sms N`, N = 10..90.
        Неверный аргумент — usage и выход 1: молча гадать нельзя. */
     if (argc > 1) {
         char *end = nullptr;
@@ -1394,6 +1806,11 @@ int main(int argc, char **argv)
             return 1;
         }
         MASTER_PCT = (int)v;
+    }
+
+    if (!grab_lock()) {
+        fprintf(stderr, "sms: уже запущен другой экземпляр\n");
+        return 1;
     }
 
     int sub_fd = sway_connect();
@@ -1412,10 +1829,10 @@ int main(int argc, char **argv)
         json_object *tree = get_tree(cmd_fd);
         if (tree != nullptr) {
             json_object *fws = nullptr;    /* семя фокусного стола */
-            (void)find_focused(tree, nullptr, &fws);
+            json_object *leaf = find_focused(tree, nullptr, &fws);
             if (fws != nullptr) g_focus_ws = jint(fws, "id");
-            bool mv = false;
-            bool any = retile_all(cmd_fd, tree, &ACT_NONE, &mv);
+            if (leaf != nullptr) g_focus_win = jint(leaf, "id");
+            bool any = retile_all(cmd_fd, tree, &ACT_NONE);
             json_object_put(tree);
             if (any) reconcile(cmd_fd);  /* долечить + засеять снимки */
         }
@@ -1465,5 +1882,6 @@ int main(int argc, char **argv)
 
     close(sub_fd);
     close(cmd_fd);
+    if (g_lock_fd >= 0) close(g_lock_fd);
     return 0;
 }
