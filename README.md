@@ -22,8 +22,6 @@
 
 ## English
 
-A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and [SwayFX](https://github.com/WillPower3309/swayfx). It listens to Sway events over IPC and restores the layout with a single batch of commands. Nothing to add to your Sway config. Written in ISO C23, tested on sway 1.12.
-=======
 A small DWM-style master/stack tiling daemon for [Sway](https://github.com/swaywm/sway) and [SwayFX](https://github.com/wlrfx/swayfx). 
 
 Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
@@ -98,8 +96,6 @@ exec sway-master-stack 60
 
 ## Русский
 
-Небольшой демон тайлинга master/stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и [SwayFX](https://github.com/WillPower3309/swayfx). Он слушает события Sway по IPC и восстанавливает раскладку одной пачкой команд. В конфиг Sway добавлять нечего. Написан на ISO C23, протестирован на sway 1.12.
-=======
 Небольшой демон тайлинга Master-Stack в стиле DWM для [Sway](https://github.com/swaywm/sway) и [SwayFX](https://github.com/wlrfx/swayfx).
 
 Написан на **ISO C23** через нативный сокет Sway IPC (`$SWAYSOCK`) и библиотеку `json-c`.
