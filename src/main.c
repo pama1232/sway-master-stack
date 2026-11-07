@@ -138,10 +138,6 @@ enum { RUN_COMMAND = 0, SUBSCRIBE = 2, GET_TREE = 4 };
 
 static bool g_debug = false; /* SMS_DEBUG — фиксируется один раз в main */
 
-/* Счётчик реально отправленных move-команд: reconcile после пачки нужен
-   ТОЛЬКО если были move (swap/mark/resize/focus window::move не дают —
-   геометрия не меняется, снимок засеет следующий здоровый круг). */
-
 /* Счётчик команд, меняющих порядок/иерархию дерева (move/swap/split/
    layout). Пачка только из меток/resize/focus порядок не трогает —
    снимок после неё остаётся верным (см. finish в retile_ws). */

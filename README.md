@@ -45,7 +45,7 @@ Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
 - **Tray and popups stay out**: the floating verdict is read from the socket before a new window is touched.
 - **Multi-monitor safe**: windows stay on their output when the master closes.
 - **Stable master close**: if only one stacked window remains, the layout returns to a horizontal master/stack; the next window does not open vertically.
-- **Light**: ~2 MB RAM, 0% CPU idle, clean under AddressSanitizer and UndefinedBehaviorSanitizer.
+- **Light**: ~2 MB RSS in a release build, 0% CPU idle, clean under AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ### Configuration
 
@@ -80,6 +80,9 @@ sudo cmake --install build
 `cmake --install` also creates `sway-master-stack` as a compatibility
 symlink, so Sway configs from 2.0.x keep working. The canonical binary
 name is `sway-mstack`.
+
+For a portable x86-64 binary that is not tied to the build host's CPU,
+add `-DSMS_NATIVE=OFF` to the configure command.
 
 ### Sway setup
 
@@ -122,7 +125,7 @@ exec sway-mstack 60
 - **Трей и попапы не трогаются**: вердикт по плаванию вычитывается из сокета до того, как демон тронет новое окно.
 - **Мультимонитор**: окна не улетают на другой выход при закрытии мастера.
 - **Стабильное закрытие мастера**: если в стопке осталось одно окно, раскладка возвращается к горизонтальной; следующее окно не открывается вертикально.
-- **Лёгкий**: ~2 МБ RAM, 0% CPU в простое, чист под AddressSanitizer и UndefinedBehaviorSanitizer.
+- **Лёгкий**: ~2 МБ RSS в релизной сборке, 0% CPU в простое, чист под AddressSanitizer и UndefinedBehaviorSanitizer.
 
 ### Настройка
 
@@ -157,6 +160,9 @@ sudo cmake --install build
 `cmake --install` также создаёт совместимую ссылку `sway-master-stack`,
 поэтому конфиги Sway от 2.0.x продолжают работать. Основное имя
 бинарника — `sway-mstack`.
+
+Для переносимого x86-64-бинарника, не привязанного к CPU сборочной
+машины, добавьте `-DSMS_NATIVE=OFF` в команду конфигурации.
 
 ### Подключение в Sway
 
