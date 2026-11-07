@@ -2,7 +2,7 @@
 build/
 bin/
 lib/
-
+build-debug/
 # Метаданные редакторов и кэш clangd
 .vscode/
 .idea/
@@ -14,3 +14,7 @@ compile_commands.json
 *.swp
 *.swo
 *~
+
+# для ИИ агнетов
+LOG.md
+n3998.pdf

@@ -1,6 +1,6 @@
-# sway-master-stack
+# sway-mstack
 
-[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)]()
 [![Standard](https://img.shields.io/badge/C23-ISO%2FIEC%209899%3A2024-00599C.svg)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
 [![Platform](https://img.shields.io/badge/Sway%20%7C%20SwayFX-orange.svg)](https://swaywm.org/)
 [![RAM](https://img.shields.io/badge/RAM-~2MB-brightgreen.svg)]()
@@ -44,11 +44,12 @@ Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
 - **Fast response**: the batch goes out in a single `write()`, no tree round trip.
 - **Tray and popups stay out**: the floating verdict is read from the socket before a new window is touched.
 - **Multi-monitor safe**: windows stay on their output when the master closes.
+- **Stable master close**: if only one stacked window remains, the layout returns to a horizontal master/stack; the next window does not open vertically.
 - **Light**: ~2 MB RAM, 0% CPU idle, clean under AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ### Configuration
 
-- `sway-master-stack 60`: master share at launch, range 10 to 90. Default 55/45.
+- `sway-mstack 60`: master share at launch, range 10 to 90. Default 55/45.
 
 ### Requirements
 
@@ -76,18 +77,22 @@ cmake --build build
 sudo cmake --install build
 ```
 
+`cmake --install` also creates `sway-master-stack` as a compatibility
+symlink, so Sway configs from 2.0.x keep working. The canonical binary
+name is `sway-mstack`.
+
 ### Sway setup
 
 Add to `~/.config/sway/config`:
 
 ```sway
-exec sway-master-stack
+exec sway-mstack
 ```
 
 Or with a custom ratio:
 
 ```sway
-exec sway-master-stack 60
+exec sway-mstack 60
 ```
 
 ---
@@ -116,11 +121,12 @@ exec sway-master-stack 60
 - **Быстрый отклик**: команды уходят одним `write()`, без обхода дерева.
 - **Трей и попапы не трогаются**: вердикт по плаванию вычитывается из сокета до того, как демон тронет новое окно.
 - **Мультимонитор**: окна не улетают на другой выход при закрытии мастера.
+- **Стабильное закрытие мастера**: если в стопке осталось одно окно, раскладка возвращается к горизонтальной; следующее окно не открывается вертикально.
 - **Лёгкий**: ~2 МБ RAM, 0% CPU в простое, чист под AddressSanitizer и UndefinedBehaviorSanitizer.
 
 ### Настройка
 
-- `sway-master-stack 60`: доля мастера при запуске, диапазон от 10 до 90. По умолчанию 55/45.
+- `sway-mstack 60`: доля мастера при запуске, диапазон от 10 до 90. По умолчанию 55/45.
 
 ### Зависимости
 
@@ -148,26 +154,30 @@ cmake --build build
 sudo cmake --install build
 ```
 
+`cmake --install` также создаёт совместимую ссылку `sway-master-stack`,
+поэтому конфиги Sway от 2.0.x продолжают работать. Основное имя
+бинарника — `sway-mstack`.
+
 ### Подключение в Sway
 
 Добавьте в `~/.config/sway/config`:
 
 ```sway
-exec sway-master-stack
+exec sway-mstack
 ```
 
 Или с нужной долей мастера:
 
 ```sway
-exec sway-master-stack 60
+exec sway-mstack 60
 ```
 
 ---
 
 ## Acknowledgements / Благодарности
 
-- Written, debugged, and optimized with the assistance of **GLM 5.3**.
-- Разработано, отлажено и оптимизировано с помощью **GLM 5.3**.
+- Written, debugged, and optimized with the assistance of **GLM 5.3** and **DeepSeek V4.1 Flash**.
+- Разработано, отлажено и оптимизировано с помощью **GLM 5.3** и **DeepSeek V4.1 Flash**.
 
 ## License / Лицензия
 

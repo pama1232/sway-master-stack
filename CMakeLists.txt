@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(sway-master-stack
-    VERSION 2.0.1
+project(sway-mstack
+    VERSION 2.1.0
     LANGUAGES C
 )
 
@@ -101,7 +101,7 @@ if (CMAKE_C_COMPILER_ID MATCHES "Clang")
     )
 endif()
 
-# Таргет демона sway-master-stack
+# Таргет демона sway-mstack
 add_executable(${PROJECT_NAME} src/main.c)
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
@@ -112,3 +112,20 @@ target_link_libraries(${PROJECT_NAME}
 # Установка
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Совместимость со старым именем из 2.0.x. Ссылка создаётся в том же
+# каталоге, что и бинарник, и учитывает --prefix и DESTDIR.
+install(CODE "
+  set(_bindir \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\")
+  set(_old \"\${_bindir}/sway-master-stack\")
+  file(REMOVE \"\${_old}\")
+  execute_process(
+    COMMAND \"${CMAKE_COMMAND}\" -E create_symlink sway-mstack \"\${_old}\"
+    RESULT_VARIABLE _rc)
+  if(NOT _rc EQUAL 0)
+    message(WARNING \"sway-master-stack: не удалось создать совместимую ссылку\")
+  endif()
+")
+
+install(FILES README.md CHANGELOG.md LICENSE
+        DESTINATION ${CMAKE_INSTALL_DOCDIR})
