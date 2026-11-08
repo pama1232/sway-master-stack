@@ -1,5 +1,35 @@
 # CHANGELOG — sway-mstack
 
+## [Unreleased]
+
+### Добавлено
+
+- **Unit-тесты** (`tests/unit/`, CTest-метка `unit`): 316 проверок
+  статических функций — экранирование имён, JSON-доступоры, сбор
+  тайлов, пропорции, снимки, кэш эха, построение команд, IPC-фрейминг и
+  POSIX I/O. В Debug-сборке проходят под AddressSanitizer и
+  UndefinedBehaviorSanitizer.
+- **E2E-тесты** (`tests/e2e/`, 8 сценариев, 61 проверка): приватная
+  headless-сессия Sway на каждый сценарий, изолированные
+  `XDG_RUNTIME_DIR`/`SWAYSOCK`/`WAYLAND_DISPLAY` и свой `sms.lock`.
+  Покрыты геометрия n=1/2/3, смерть мастера, зум, крайние движения,
+  ротация, tabbed-стопка, длинные имена и второй выход.
+- **CI GitHub Actions**: матрица Release и Debug (ASan/UBSan), unit- и
+  E2E-тесты в headless Sway, проверка `cmake --install`.
+- **Документация**: `ARCHITECTURE_ru.md` и `ARCHITECTURE_en.md`
+  (модель состояния, конвейер событий, быстрые пути, тесты),
+  `CONTRIBUTING.md`, `tests/README.md`.
+
+### Изменено
+
+- `demo.gif` удалён из репозитория и истории; демо доступно по внешней
+  ссылке из README и не клонируется вместе с проектом. История git
+  очищена от демо-медиа: `.git` занимает ~250 КБ вместо ~254 МБ.
+- `.gitignore`: демо-медиа и каталоги `build-*/`.
+- CMake: `ctest` для unit-тестов, опция `-DSMS_E2E=ON` для регистрации
+  E2E в CTest, установка архитектурной документации в
+  `share/doc/sway-mstack`.
+
 ## [2.1.0] — 2026-11-07
 
 ### Исправлено

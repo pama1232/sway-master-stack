@@ -1,8 +1,8 @@
 # Сборочные директории CMake
 build/
+build-*/
 bin/
 lib/
-build-debug/
 # Метаданные редакторов и кэш clangd
 .vscode/
 .idea/
@@ -18,3 +18,9 @@ compile_commands.json
 # для ИИ агнетов
 LOG.md
 n3998.pdf
+
+# Демо-медиа: хранится вне репозитория, в README — внешняя ссылка
+demo.gif
+demo-nvenc.mp4
+demo-*.gif
+demo-*.mp4
