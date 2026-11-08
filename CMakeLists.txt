@@ -113,6 +113,46 @@ target_link_libraries(${PROJECT_NAME}
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# ── Тесты ──
+# Unit-тесты включают src/main.c целиком (демон — один translation unit),
+# поэтому таргет собирает только тестовый файл. CTest видит его как
+# `sms.unit`; E2E-сценарии живут в tests/e2e и запускаются отдельно.
+include(CTest)
+option(SMS_E2E "Register E2E tests (requires sway, swaymsg, foot, jq)" OFF)
+if(BUILD_TESTING)
+  add_executable(sms_unit tests/unit/test_main.c)
+  target_link_libraries(sms_unit
+      PRIVATE
+      sys_compiler_flags
+      PkgConfig::JSON_C
+  )
+  # Включённый main.c содержит функции, которые тесты не вызывают;
+  # тестовый код намеренно делает явные приведения типов.
+  target_compile_options(sms_unit PRIVATE
+      -Wno-unused-function
+      -Wno-unused-variable
+      -Wno-conversion
+  )
+  add_test(NAME sms.unit COMMAND sms_unit)
+  set_tests_properties(sms.unit PROPERTIES
+      LABELS unit
+      TIMEOUT 30
+  )
+  # E2E поднимает настоящий headless Sway: включается явно, чтобы
+  # обычная сборка не требовала sway/foot/jq.
+  if(SMS_E2E)
+    add_test(NAME sms.e2e
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/run.sh
+                --binary $<TARGET_FILE:${PROJECT_NAME}>)
+    set_tests_properties(sms.e2e PROPERTIES
+        LABELS e2e
+        TIMEOUT 900
+        RUN_SERIAL TRUE
+    )
+  endif()
+endif()
+
+
 # Совместимость со старым именем из 2.0.x. Ссылка создаётся в том же
 # каталоге, что и бинарник, и учитывает --prefix и DESTDIR.
 install(CODE "
@@ -128,4 +168,5 @@ install(CODE "
 ")
 
 install(FILES README.md CHANGELOG.md LICENSE
+        ARCHITECTURE_ru.md ARCHITECTURE_en.md
         DESTINATION ${CMAKE_INSTALL_DOCDIR})
