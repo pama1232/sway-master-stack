@@ -61,7 +61,7 @@ Written in **ISO C23** using the native Sway UNIX IPC protocol and `json-c`.
 
 ### Requirements
 
-- `clang` (>= 18, C23)
+- `clang` (>= 19, C23)
 - `cmake` (>= 3.25)
 - `lld`
 - `json-c`
@@ -72,6 +72,9 @@ On Arch Linux:
 ```sh
 sudo pacman -S --needed clang lld cmake json-c pkgconf
 ```
+
+Ubuntu 24.04 ships clang 18, which lacks C23 `constexpr`; install clang-19
+or newer from [apt.llvm.org](https://apt.llvm.org/).
 
 ### Building
 
@@ -163,7 +166,7 @@ guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Зависимости
 
-- `clang` (>= 18, C23)
+- `clang` (>= 19, C23)
 - `cmake` (>= 3.25)
 - `lld`
 - `json-c`
@@ -174,6 +177,9 @@ guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 ```sh
 sudo pacman -S --needed clang lld cmake json-c pkgconf
 ```
+
+В Ubuntu 24.04 пакетный clang — 18, в нём нет C23 `constexpr`;
+установите clang-19 или новее из [apt.llvm.org](https://apt.llvm.org/).
 
 ### Сборка и установка
 

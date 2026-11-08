@@ -14,8 +14,9 @@
   `XDG_RUNTIME_DIR`/`SWAYSOCK`/`WAYLAND_DISPLAY` и свой `sms.lock`.
   Покрыты геометрия n=1/2/3, смерть мастера, зум, крайние движения,
   ротация, tabbed-стопка, длинные имена и второй выход.
-- **CI GitHub Actions**: матрица Release и Debug (ASan/UBSan), unit- и
-  E2E-тесты в headless Sway, проверка `cmake --install`.
+- **CI GitHub Actions**: матрица Release и Debug (ASan/UBSan) на Clang 23
+  (в clang 18 из Ubuntu нет C23 `constexpr`), unit- и E2E-тесты в
+  headless Sway, проверка `cmake --install`.
 - **Документация**: `ARCHITECTURE_ru.md` и `ARCHITECTURE_en.md`
   (модель состояния, конвейер событий, быстрые пути, тесты),
   `CONTRIBUTING.md`, `tests/README.md`.

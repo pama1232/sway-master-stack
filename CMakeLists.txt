@@ -17,6 +17,20 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# C23 constexpr появился только в Clang 19, а stdckdint.h — в GCC 14.
+# Без явной проверки старый компилятор выдаёт поток невнятных ошибок.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang"
+   AND CMAKE_C_COMPILER_VERSION VERSION_LESS 19)
+  message(FATAL_ERROR
+    "Нужен Clang >= 19 (найден ${CMAKE_C_COMPILER_VERSION}): "
+    "в более старых нет C23 constexpr")
+elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU"
+       AND CMAKE_C_COMPILER_VERSION VERSION_LESS 14)
+  message(FATAL_ERROR
+    "Нужен GCC >= 14 (найден ${CMAKE_C_COMPILER_VERSION}): "
+    "в более старых нет stdckdint.h")
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSON_C REQUIRED IMPORTED_TARGET json-c)
 

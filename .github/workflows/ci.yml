@@ -42,8 +42,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang lld cmake ninja-build pkg-config libjson-c-dev \
-            sway foot jq fonts-dejavu-core
+            cmake ninja-build pkg-config libjson-c-dev \
+            sway foot jq fonts-dejavu-core wget ca-certificates gnupg
+          # Clang 18 из Ubuntu не умеет C23 constexpr — ставим свежий LLVM.
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-23 lld-23 libclang-rt-23-dev
+          echo "/usr/lib/llvm-23/bin" >> "$GITHUB_PATH"
 
       - name: Configure
         run: |
