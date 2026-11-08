@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Release
+            build_type: Release
+          - name: Debug (ASan/UBSan)
+            build_type: Debug
+
+    env:
+      CC: clang
+      # Чуть больше паузы, чем локально: раннеры бывают медленными.
+      E2E_SETTLE: "0.6"
+      ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1"
+      UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld cmake ninja-build pkg-config libjson-c-dev \
+            sway foot jq fonts-dejavu-core
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DSMS_NATIVE=OFF \
+            -DSMS_E2E=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Unit tests
+        run: ctest --test-dir build -L unit --output-on-failure
+
+      - name: E2E tests (headless Sway)
+        run: ctest --test-dir build -L e2e --output-on-failure
+
+      - name: Install smoke test
+        if: matrix.build_type == 'Release'
+        run: |
+          cmake --install build --prefix "$PWD/stage"
+          test -x stage/bin/sway-mstack
+          test -L stage/bin/sway-master-stack
+          test -f stage/share/doc/sway-mstack/ARCHITECTURE_en.md
+          test -f stage/share/doc/sway-mstack/ARCHITECTURE_ru.md
