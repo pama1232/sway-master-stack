@@ -25,7 +25,7 @@ CC=clang cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-debug -j
 ```
 
-Требования: CMake ≥ 3.25, clang ≥ 18 (C23), lld, json-c, pkgconf.
+Требования: CMake ≥ 3.25, clang ≥ 19 (C23), lld, json-c, pkgconf.
 Для переносимого бинарника — `-DSMS_NATIVE=OFF`.
 
 ## Стиль кода
