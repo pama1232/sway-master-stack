@@ -1,0 +1,3 @@
+# Unity fragments are C, not C++: tell GitHub Linguist the real language.
+# Without this GitHub classifies the whole repository as C++ because of *.inc.
+src/parts/*.inc linguist-language=C
