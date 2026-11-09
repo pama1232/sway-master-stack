@@ -29,7 +29,7 @@ jobs:
 
     env:
       CC: clang
-      # Чуть больше паузы, чем локально: раннеры бывают медленными.
+      # A little longer than local: GitHub runners can be slow.
       E2E_SETTLE: "0.6"
       ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1"
       UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config libjson-c-dev \
             sway foot jq fonts-dejavu-core wget ca-certificates gnupg
-          # Clang 18 из Ubuntu не умеет C23 constexpr — ставим свежий LLVM.
+          # Ubuntu's clang 18 lacks C23 constexpr; install a recent LLVM.
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
