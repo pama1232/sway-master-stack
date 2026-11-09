@@ -316,6 +316,32 @@ resize новичка в MASTER_PCT
 
 ## 9. Сборка
 
+### 9.1. Структура исходников
+
+Демон остаётся **одним translation unit**: `src/main.c` включает
+`src/sms.h` и фрагменты `src/parts/*.inc` в порядке объявлений. Это
+сохраняет статические функции, глобальное состояние и существующие
+unit-тесты, которые включают `src/main.c` целиком.
+
+| Файл | Содержимое |
+| --- | --- |
+| `src/main.c` | точка входа, сигналы, порядок включения частей |
+| `src/sms.h` | feature-макросы, системные include, тюнинг, общие флаги |
+| `src/parts/ipc.inc` | POSIX I/O и кадры Sway IPC |
+| `src/parts/json.inc` | NULL-безопасные доступоры json-c |
+| `src/parts/layout.inc` | гварды воркспейса, сбор тайлов, `idx_of` |
+| `src/parts/echo.inc` | кэш эха move-команд |
+| `src/parts/command.inc` | сборка и отправка команд |
+| `src/parts/snapshot.inc` | пропорции, `Act`, снимки столов |
+| `src/parts/retile.inc` | `retile_ws`, `retile_all`, reconcile |
+| `src/parts/spawn.inc` | `spawn_fast`, `death_fast`, вердикты |
+| `src/parts/events.inc` | обработчики событий и поиск фокуса |
+| `src/parts/socket.inc` | сокет, подписка, `sms.lock` |
+
+Фрагменты не компилируются отдельно: CMake по-прежнему собирает только
+`src/main.c`. Разбиение чисто навигационное — поток токенов после
+препроцессора и Release-бинарник совпадают с прежним монолитом.
+
 CMake 3.25+, C23, `json-c`. Release: `-O3`, LTO/IPO (если поддерживается),
 `-march=native` по умолчанию (отключается `-DSMS_NATIVE=OFF`), харденинг
 (`-fstack-protector-strong`, `-fstack-clash-protection`, RELRO, BIND_NOW,

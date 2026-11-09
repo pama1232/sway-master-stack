@@ -330,6 +330,32 @@ without move commands (for example, a single `split vertical` on a flat
 
 ## 9. Build
 
+### 9.1. Source layout
+
+The daemon remains a **single translation unit**: `src/main.c` includes
+`src/sms.h` and the `src/parts/*.inc` fragments in declaration order.
+This preserves static functions, global state, and the existing unit
+tests that include `src/main.c` as a whole.
+
+| File | Contents |
+| --- | --- |
+| `src/main.c` | entry point, signals, include order |
+| `src/sms.h` | feature macros, system includes, tuning, shared flags |
+| `src/parts/ipc.inc` | POSIX I/O and Sway IPC frames |
+| `src/parts/json.inc` | NULL-safe json-c accessors |
+| `src/parts/layout.inc` | workspace guards, tile collection, `idx_of` |
+| `src/parts/echo.inc` | echo cache for move commands |
+| `src/parts/command.inc` | command building and sending |
+| `src/parts/snapshot.inc` | proportions, `Act`, workspace snapshots |
+| `src/parts/retile.inc` | `retile_ws`, `retile_all`, reconcile |
+| `src/parts/spawn.inc` | `spawn_fast`, `death_fast`, verdicts |
+| `src/parts/events.inc` | event handlers and focus lookup |
+| `src/parts/socket.inc` | socket, subscription, `sms.lock` |
+
+The fragments are not compiled separately: CMake still builds only
+`src/main.c`. The split is purely navigational — the preprocessed token
+stream and the Release binary match the former monolith.
+
 CMake 3.25+, C23, `json-c`. Release: `-O3`, LTO/IPO (when supported),
 `-march=native` by default (disable with `-DSMS_NATIVE=OFF`), hardening
 (`-fstack-protector-strong`, `-fstack-clash-protection`, RELRO,
