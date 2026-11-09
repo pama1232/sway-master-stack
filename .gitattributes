@@ -1,3 +1,4 @@
-# Unity fragments are C, not C++: tell GitHub Linguist the real language.
-# Without this GitHub classifies the whole repository as C++ because of *.inc.
+# The daemon is C, not C++: tell GitHub Linguist the real language.
+# Without this GitHub classifies *.inc and the shared header as C++.
 src/parts/*.inc linguist-language=C
+src/*.h linguist-language=C

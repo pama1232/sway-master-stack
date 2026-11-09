@@ -36,8 +36,9 @@
   исходников после разбиения `main.c`. CI-комментарии переведены на
   английский.
 - `.gitignore`: демо-медиа и каталоги `build-*/`.
-- `.gitattributes`: фрагменты `src/parts/*.inc` помечены как C, чтобы
-  GitHub Linguist не классифицировал репозиторий как C++.
+- `.gitattributes`: фрагменты `src/parts/*.inc` и заголовок `src/sms.h`
+  помечены как C, чтобы GitHub Linguist не классифицировал репозиторий
+  как C++.
 - CMake: `ctest` для unit-тестов, опция `-DSMS_E2E=ON` для регистрации
   E2E в CTest, установка архитектурной документации в
   `share/doc/sway-mstack`.
