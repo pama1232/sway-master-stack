@@ -155,5 +155,3 @@ static int idx_of(const Tiled *t, int64_t id) {
       return i;
   return -1;
 }
-
-

@@ -208,5 +208,3 @@ static bool output_right_of(json_object *root, json_object *ws) {
   }
   return false;
 }
-
-

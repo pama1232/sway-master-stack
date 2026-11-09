@@ -81,5 +81,3 @@ static void close_lock(void) {
     g_lock_fd = -1;
   }
 }
-
-

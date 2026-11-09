@@ -147,5 +147,3 @@ static void echo_forget(int64_t id) {
     if (g_echo[i].id == id)
       g_echo[i] = g_echo[--echo_n];
 }
-
-

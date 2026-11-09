@@ -104,5 +104,3 @@ static void send_cmd(int fd, const char *cmd) {
   }
   return nullptr;
 }
-
-

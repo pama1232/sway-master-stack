@@ -777,5 +777,3 @@ static void reconcile_ws(int fd, int64_t wsid) {
       break;
   }
 }
-
-

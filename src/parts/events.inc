@@ -189,5 +189,3 @@ static json_object *find_focused(json_object *n, json_object *ws,
   }
   return nullptr;
 }
-
-

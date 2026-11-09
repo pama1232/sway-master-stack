@@ -69,5 +69,3 @@ static bool is_tiled_with_nodes(json_object *n, json_object *nodes) {
 [[maybe_unused]] static bool is_tiled(json_object *n) {
   return is_tiled_with_nodes(n, jarr(n, "nodes"));
 }
-
-
