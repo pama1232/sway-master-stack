@@ -115,7 +115,9 @@ if (CMAKE_C_COMPILER_ID MATCHES "Clang")
     )
 endif()
 
-# Таргет демона sway-mstack
+# Таргет демона sway-mstack. Демон — один translation unit: main.c
+# включает sms.h и фрагменты parts/*.inc, поэтому компилируется только
+# main.c.
 add_executable(${PROJECT_NAME} src/main.c)
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
@@ -128,9 +130,10 @@ include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ── Тесты ──
-# Unit-тесты включают src/main.c целиком (демон — один translation unit),
-# поэтому таргет собирает только тестовый файл. CTest видит его как
-# `sms.unit`; E2E-сценарии живут в tests/e2e и запускаются отдельно.
+# Unit-тесты включают src/main.c целиком (демон — один translation unit;
+# main.c подтягивает sms.h и parts/*.inc), поэтому таргет собирает только
+# тестовый файл. CTest видит его как `sms.unit`; E2E-сценарии живут в
+# tests/e2e и запускаются отдельно.
 include(CTest)
 option(SMS_E2E "Register E2E tests (requires sway, swaymsg, foot, jq)" OFF)
 if(BUILD_TESTING)
@@ -140,8 +143,8 @@ if(BUILD_TESTING)
       sys_compiler_flags
       PkgConfig::JSON_C
   )
-  # Включённый main.c содержит функции, которые тесты не вызывают;
-  # тестовый код намеренно делает явные приведения типов.
+  # Включённые main.c и parts/*.inc содержат функции, которые тесты не
+  # вызывают; тестовый код намеренно делает явные приведения типов.
   target_compile_options(sms_unit PRIVATE
       -Wno-unused-function
       -Wno-unused-variable
