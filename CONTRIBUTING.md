@@ -1,98 +1,98 @@
-# Как участвовать в разработке sway-mstack
+# Contributing to sway-mstack
 
-Спасибо за интерес к проекту. Ниже — минимальный процесс, который
-помогает не сломать раскладку и не потерять совместимость.
+[Русская версия](CONTRIBUTING_ru.md)
 
-## Перед началом
+Thanks for your interest in the project. This page describes the minimum process
+that keeps the layout and compatibility intact.
 
-- Для крупных изменений сначала откройте issue: обсудите поведение и
-  границы правки. Демон маленький, но с большим количеством
-  инвариантов; «очевидный» рефакторинг может сломать зум или смерть
-  мастера.
-- Один pull request — одна логическая правка. Инфраструктура, тесты и
-  поведение лучше разделять по коммитам.
-- Не добавляйте демо-медиа (GIF/MP4) в репозиторий: демо лежит вне
-  репозитория, в README — только ссылка.
+## Scope
 
-## Сборка
+`sway-mstack` implements one layout well: master/stack for Sway over the
+standard IPC. Changes that add compositor patches, new keybindings or a second
+layout are out of scope unless discussed in an issue first.
+
+## Before you start
+
+- Open an issue for large changes. The daemon is small but has many invariants;
+  an obvious refactor can break zoom or closing the master.
+- One pull request, one logical change. Keep infrastructure, tests and behavior
+  in separate commits.
+- Do not add demo media (GIF/MP4) to the repository. The demo lives outside the
+  repo and README links to it.
+
+## Build
 
 ```sh
 CC=clang cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 
-# Для работы над логикой — Debug с ASan/UBSan:
+# For logic work, use Debug with ASan/UBSan:
 CC=clang cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-debug -j
 ```
 
-Требования: CMake ≥ 3.25, clang ≥ 19 (C23), lld, json-c, pkgconf.
-Для переносимого бинарника — `-DSMS_NATIVE=OFF`.
+Requirements: CMake >= 3.25, clang >= 19 (C23), lld, json-c, pkgconf. For a
+portable binary, add `-DSMS_NATIVE=OFF`.
 
-## Структура исходников
+## Source layout
 
-Демон — **один translation unit**: `src/main.c` включает `src/sms.h` и
-фрагменты `src/parts/*.inc` в порядке объявлений. CMake компилирует
-только `src/main.c`.
+The daemon is one translation unit: `src/main.c` includes `src/sms.h` and the
+fragments in `src/parts/*.inc` in declaration order. CMake compiles only
+`src/main.c`.
 
-- Новый код кладите в подходящий фрагмент `src/parts/`.
-- Если нужен новый фрагмент, добавьте его в `src/main.c` после
-  зависимостей, которые он использует, и обновите таблицу в
-  `ARCHITECTURE_ru.md` / `ARCHITECTURE_en.md`.
-- Не компилируйте `.inc` отдельно и не превращайте их в самостоятельные
-  `.c` без обсуждения: unit-тесты включают `src/main.c` целиком и
-  проверяют статические функции.
-- Разбиение навигационное. Оно не должно менять поток токенов после
-  препроцессора и кодогенерацию; проверяйте это сборкой Release.
+- Put new code in the matching fragment under `src/parts/`.
+- If you need a new fragment, include it in `src/main.c` after its dependencies
+  and update the table in `ARCHITECTURE_ru.md` and `ARCHITECTURE_en.md`.
+- Do not compile `.inc` files separately or turn them into standalone `.c` files
+  without discussion. Unit tests include `src/main.c` and check static helpers.
+- The split is for navigation. It must not change the preprocessed token stream
+  or code generation. Verify with a Release build.
 
-## Стиль кода
+## Code style
 
-- **C23**, без GNU-расширений (`CMAKE_C_EXTENSIONS OFF`).
-- Отступ — 2 пробела, ширина — 80 колонок.
-- `nullptr`, `bool`, `constexpr`, `[[nodiscard]]` — как в существующем
-  коде.
-- **Комментарии в `src/` — по-русски.** Не переводите их на английский
-  и не удаляйте объяснения инвариантов: они фиксируют замеренное
-  поведение Sway.
-- Новые статические функции по возможности делайте `[[nodiscard]]`,
-  если игнорирование результата — ошибка.
-- Не добавляйте зависимости без необходимости: проект сознательно
-  обходится `json-c` и POSIX.
-- Предупреждения компилятора (`-Wall -Wextra -Wpedantic -Wconversion
-  -Wshadow`) должны оставаться чистыми.
+- **C23**, no GNU extensions (`CMAKE_C_EXTENSIONS OFF`).
+- Two spaces per indent, 80 columns.
+- Use `nullptr`, `bool`, `constexpr` and `[[nodiscard]]` as in the existing
+  code.
+- **Comments in `src/` are in Russian.** Do not translate them to English or
+  remove invariant explanations. They record measured Sway behavior.
+- Mark new static functions `[[nodiscard]]` when ignoring the result is a bug.
+- Do not add dependencies without a reason. The project uses `json-c` and POSIX
+  only.
+- Compiler warnings (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`) must stay
+  clean.
 
-## Тесты
+## Tests
 
-Перед pull request:
+Before a pull request:
 
 ```sh
-# Unit (Release и Debug)
+# Unit tests (Release and Debug)
 ctest --test-dir build --output-on-failure
 ctest --test-dir build-debug --output-on-failure
 
-# E2E в приватной headless-сессии Sway
+# E2E in a private headless Sway session
 tests/e2e/run.sh
 ```
 
-Если меняется поведение раскладки, добавьте сценарий в
-`tests/e2e/run.sh` и, где возможно, проверку в
-`tests/unit/test_main.c`. Тест включает `src/main.c`, поэтому новые
-фрагменты `src/parts/*.inc` подхватываются автоматически. Как устроены
-тесты и как их отлаживать — в [tests/README.md](tests/README.md).
+If you change layout behavior, add a scenario to `tests/e2e/run.sh` and, where
+possible, a check to `tests/unit/test_main.c`. The test includes `src/main.c`,
+so new `src/parts/*.inc` fragments are picked up automatically. See
+[tests/README.md](tests/README.md) for the harness and debugging tips.
 
-E2E не должен трогать живую сессию Sway: каждый сценарий обязан
-поднимать свой `XDG_RUNTIME_DIR`, `SWAYSOCK` и `WAYLAND_DISPLAY`.
+E2E must not touch the live Sway session. Every scenario must start its own
+`XDG_RUNTIME_DIR`, `SWAYSOCK` and `WAYLAND_DISPLAY`.
 
-## Коммиты
+## Commits
 
-- Заголовок — короткий, в повелительном наклонении, с префиксом:
-  `fix:`, `feat:`, `docs:`, `test:`, `build:`, `ci:`, `refactor:`.
-- В теле объясняйте **почему**, а не только что. Для исправлений
-  полезно указать воспроизведение и замеренное поведение Sway.
-- Пользовательские изменения фиксируйте в `CHANGELOG.md` под
-  `[Unreleased]`. Версию и дату релиза не поднимайте без
-  договорённости.
+- Use a short imperative subject with a prefix: `fix:`, `feat:`, `docs:`,
+  `test:`, `build:`, `ci:`, `refactor:`.
+- Explain **why** in the body, not only what. For fixes, include the
+  reproduction and the measured Sway behavior.
+- Record user-facing changes in `CHANGELOG.md` under `[Unreleased]`. Do not bump
+  the version or release date without agreement.
 
-Пример:
+Example:
 
 ```text
 fix: keep focus on the workspace when the last master dies
@@ -104,27 +104,26 @@ user stays on the emptied workspace.
 
 ## Pull request
 
-- [ ] Сборка Release и Debug проходит без предупреждений.
-- [ ] `ctest` (unit) зелёный в обеих конфигурациях.
-- [ ] `tests/e2e/run.sh` зелёный; новые сценарии добавлены при
-      изменении поведения.
-- [ ] `CHANGELOG.md` обновлён для пользовательских изменений.
-- [ ] Комментарии в `src/` остались на русском.
-- [ ] Новые фрагменты `src/parts/*.inc` включены в `src/main.c`.
-- [ ] В diff нет демо-медиа, сборочных каталогов и личных файлов.
+- [ ] Release and Debug builds pass without warnings.
+- [ ] `ctest` (unit) is green in both configurations.
+- [ ] `tests/e2e/run.sh` is green; new scenarios are added when behavior
+  changes.
+- [ ] `CHANGELOG.md` is updated for user-facing changes.
+- [ ] Comments in `src/` are still in Russian.
+- [ ] New `src/parts/*.inc` fragments are included in `src/main.c`.
+- [ ] The diff has no demo media, build directories or personal files.
 
-## Документация
+## Documentation
 
-- `README.md` — установка, использование, краткие возможности и
-  структура исходников.
-- `ARCHITECTURE_ru.md` / `ARCHITECTURE_en.md` — внутреннее устройство;
-  при изменении конвейера событий, быстрых путей, состояния или
-  разбиения `src/` обновляйте обе версии.
-- `tests/README.md` — тестовый harness.
-- `CHANGELOG.md` — история пользовательских изменений.
+- `README.md`: installation, usage, features and source layout.
+- `ARCHITECTURE_ru.md` and `ARCHITECTURE_en.md`: internal design. When you
+  change the event pipeline, fast paths, state or `src/` layout, update both
+  versions.
+- `tests/README.md`: test harness.
+- `CHANGELOG.md`: user-facing history.
 
-## История git
+## Git history
 
-История репозитория уже очищена от тяжёлых демо-файлов. Не переписывайте
-историю и не делайте force-push без явного согласования: это ломает
-клоны и теги у других участников.
+The repository history has already been cleaned of heavy demo files. Do not
+rewrite history or force-push without explicit agreement. It breaks clones and
+tags for other contributors.
