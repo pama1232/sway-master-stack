@@ -408,6 +408,47 @@ static void test_proportions(void) {
   MASTER_PCT = 55;
 }
 
+/* ══════════════ master_out_of_slot (сторож свапа) ══════════════ */
+
+static void test_master_out_of_slot(void) {
+  json_object *ws = json(TREE_FIXTURE);
+  Tiled t = empty_tiled();
+  collect(ws, ws, "_m4", "_s4", "_p4", &t);
+  CHECK(!master_out_of_slot(&t)); /* канон: _m в слоте 0 */
+  json_object_put(ws);
+
+  /* свап центра: мастер уехал в стопку, на его месте — её вершина */
+  json_object *sw = json("{\"id\":4,\"type\":\"workspace\","
+                         "\"nodes\":["
+                         "{\"id\":20,\"type\":\"con\",\"marks\":[\"_s4\"]},"
+                         "{\"id\":11,\"type\":\"con\",\"layout\":\"splitv\","
+                         "\"nodes\":["
+                         "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+                         "{\"id\":30,\"type\":\"con\",\"marks\":[]}]}]}");
+  Tiled s = empty_tiled();
+  collect(sw, sw, "_m4", "_s4", "_p4", &s);
+  CHECK(s.n == 3);
+  CHECK(s.master_id == 10 && s.id[0] == 20);
+  CHECK(master_out_of_slot(&s));
+  json_object_put(sw);
+
+  Tiled one = empty_tiled();
+  one.n = 1;
+  one.id[0] = 10;
+  one.master_id = 10;
+  CHECK(!master_out_of_slot(&one)); /* одно окно — свапа нет */
+  one.master_id = -1;
+  CHECK(!master_out_of_slot(&one)); /* метки нет — не спорим */
+  one.n = 2;
+  one.id[1] = 11;
+  one.master_id = 11;
+  CHECK(master_out_of_slot(&one)); /* мастер в стопке */
+  one.master_id = 10;
+  CHECK(!master_out_of_slot(&one)); /* мастер на месте */
+  one.master_id = 99;
+  CHECK(!master_out_of_slot(&one)); /* метка на не-слоте — не спорим */
+}
+
 /* ══════════════ dead_master_ws ══════════════ */
 
 static void test_dead_master_ws(void) {
@@ -1141,6 +1182,7 @@ int main(void) {
   test_is_tiled();
   test_collect();
   test_proportions();
+  test_master_out_of_slot();
   test_dead_master_ws();
   test_snapshots();
   test_echo();

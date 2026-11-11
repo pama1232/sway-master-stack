@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(sway-mstack
-    VERSION 2.1.0
+    VERSION 2.1.1
     LANGUAGES C
 )
 
@@ -135,7 +135,7 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # тестовый файл. CTest видит его как `sms.unit`; E2E-сценарии живут в
 # tests/e2e и запускаются отдельно.
 include(CTest)
-option(SMS_E2E "Register E2E tests (requires sway, swaymsg, foot, jq)" OFF)
+option(SMS_E2E "Register E2E tests (requires sway, swaymsg, foot, jq, wlrctl)" OFF)
 if(BUILD_TESTING)
   add_executable(sms_unit tests/unit/test_main.c)
   target_link_libraries(sms_unit

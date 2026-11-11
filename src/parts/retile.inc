@@ -743,6 +743,87 @@ static void reconcile_act(int fd, const Act *act, int64_t target_cid) {
 
 static void reconcile(int fd) { reconcile_act(fd, &ACT_NONE, 0); }
 
+/* Канон мастера: держатель _m<ws> обязан быть слотом 0. Нет метки,
+   одно окно или метка на не-слоте (контейнер/чужой стол) — не наш
+   случай: сторож лечит только свап и не спорит с чужой меткой.
+   Вынесено отдельно: чистая проверка покрыта unit-тестами. */
+[[nodiscard]] static bool master_out_of_slot(const Tiled *t) {
+  return t->n >= 2 && t->master_id > 0 && t->master_id != t->id[0] &&
+         idx_of(t, t->master_id) > 0;
+}
+
+/* ── СТОРОЖ ОБМЕНА МЕСТАМИ. Sway's center-drop drag calls
+   container_swap() in finalize_move() and returns БЕЗ window::move;
+   фокус остаётся на перетащенном контейнере, поэтому window::focus
+   тоже нет — демон не узнаёт о свапе из событий вообще. Единственный
+   источник истины — дерево. Раз в WATCHDOG_MS читаем его и проверяем
+   канон: держатель _m<ws> обязан быть слотом 0. После свапа мастер и
+   вершина стопки меняются местами, метки остаются на окнах — _m
+   оказывается в стопке, и это ровно тот нездоровый случай. Стол
+   лечится обычным retile_ws (0 или 2-3 команды: переметка + resize).
+   Здоровый стол стоит один GET_TREE+parse и НОЛЬ команд; столы без
+   свапа (n<2) даже не собираются. Кросс-стол свап тоже виден: у
+   каждого стола свой _m, поэтому проверяем все, а не только
+   сфокусированный. ── */
+
+static bool heal_misplaced_ws(int fd, json_object *root, json_object *ws) {
+  int64_t wid = jint(ws, "id");
+  if (wid <= 0)
+    return false;
+  char mk_m[24], mk_s[24], mk_p[24];
+  snprintf(mk_m, sizeof mk_m, "_m%" PRId64, wid);
+  snprintf(mk_s, sizeof mk_s, "_s%" PRId64, wid);
+  snprintf(mk_p, sizeof mk_p, "_p%" PRId64, wid);
+  Tiled t;
+  memset(&t, 0, sizeof t);
+  t.master_id = -1;
+  t.stack_id = -1;
+  t.partner_id = -1;
+  collect(ws, ws, mk_m, mk_s, mk_p, &t);
+  /* n<2 — свап центра невозможен; метки одиночек лечит обычный путь
+     событий. Нет _m — не наш случай: метку мог снять пользователь,
+     а сторож не должен спорить с ним на каждом тике. */
+  if (!master_out_of_slot(&t))
+    return false;
+  if (g_debug)
+    fprintf(stderr,
+            "сторож: ws=%" PRId64 " _m=%" PRId64 " не в слоте 0 (%" PRId64
+            ") — ретайл\n",
+            wid, t.master_id, t.id[0]);
+  return retile_ws(fd, root, ws, &ACT_NONE);
+}
+
+static bool heal_walk(int fd, json_object *root, json_object *n,
+                      bool *structural) {
+  const char *type = jstr(n, "type");
+  if (type != nullptr && strcmp(type, "workspace") == 0) {
+    uint64_t before = g_struct_sent;
+    bool cmd = heal_misplaced_ws(fd, root, n);
+    if (cmd && g_struct_sent > before)
+      *structural = true;
+    return cmd;
+  }
+  json_object *nodes = jarr(n, "nodes");
+  if (nodes == nullptr)
+    return false;
+  bool any = false;
+  size_t cnt = json_object_array_length(nodes);
+  for (size_t i = 0; i < cnt; i++)
+    any |= heal_walk(fd, root, json_object_array_get_idx(nodes, i), structural);
+  return any;
+}
+
+static void watchdog_check(int fd) {
+  json_object *tree = get_tree(fd);
+  if (tree == nullptr)
+    return;
+  bool structural = false;
+  bool any = heal_walk(fd, tree, tree, &structural);
+  json_object_put(tree);
+  if (any && structural)
+    reconcile(fd);
+}
+
 /* найти узел workspace по id; воркспейсы не вложены — нашли или нет */
 [[nodiscard]] static json_object *find_ws_by_id(json_object *n, int64_t wid) {
   const char *type = jstr(n, "type");

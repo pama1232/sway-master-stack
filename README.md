@@ -1,19 +1,21 @@
 # sway-mstack
 
 [![CI](https://github.com/pama1232/sway-master-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pama1232/sway-master-stack/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/pama1232/sway-master-stack/releases/tag/v2.1.0)
+[![Version](https://img.shields.io/badge/version-2.1.1-blue.svg)](https://github.com/pama1232/sway-master-stack/releases/tag/v2.1.1)
 [![Standard](https://img.shields.io/badge/C23-ISO%2FIEC%209899%3A2024-00599C.svg)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
 [![Platform](https://img.shields.io/badge/Sway%20%7C%20SwayFX-orange.svg)](https://swaywm.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](#english) | [Русский](#русский)
 
-[Demo (14 MB GIF, external)](https://files.catbox.moe/pf5914.gif). It shows
-SwayFX with 250 ms animations. Vanilla Sway applies layout changes as discrete
+[Demo (24 MB MP4, external)](https://github.com/pama1232/sway-master-stack/releases/download/v2.1.1/demo.mp4).
+It shows SwayFX with 250 ms animations: master/stack layout, zoom, and moving
+the master to the scratchpad. Vanilla Sway applies layout changes as discrete
 transactions, so windows may jump.
 
-Демо (GIF, 14 МБ, внешняя ссылка). Показан SwayFX с анимациями 250 мс. Ванильный
-Sway применяет изменения раскладки дискретными транзакциями, поэтому окна могут
+Демо (MP4, 24 МБ, внешняя ссылка). Показан SwayFX с анимациями 250 мс:
+раскладка master/stack, зум и уход мастера в скретчпад. Ванильный Sway
+применяет изменения раскладки дискретными транзакциями, поэтому окна могут
 дёргаться.
 
 ---
@@ -56,9 +58,11 @@ keybindings.
   focus stays on the workspace.
 - When only one stacked window remains, the workspace returns to a horizontal
   master/stack instead of leaving a lone vertical container.
-- About 2 MB RSS in a release build and 0% CPU when idle. Clean under
-  AddressSanitizer and UndefinedBehaviorSanitizer.
-- 316 unit checks and 8 E2E scenarios (61 checks), run in CI in Release and
+- About 2–3 MB RSS in a release build. While idle, the center-drop watchdog
+  costs about 0.2% of one core with five windows and about 0.5% on a
+  28-window tree (one `GET_TREE` per 100 ms); without a pending swap it sends
+  no commands. Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
+- 325 unit checks and 10 E2E scenarios (87 checks), run in CI in Release and
   Debug.
 
 ### Install
@@ -229,10 +233,12 @@ Master/stack для Sway в стиле dwm, реализованный как н
   мастера, а фокус не перескакивает на другой монитор.
 - Если в стопке осталось одно окно, воркспейс возвращается к горизонтальной
   раскладке, а не оставляет одинокий вертикальный контейнер.
-- Около 2 МБ RSS в релизной сборке и 0% CPU в простое. Чисто под
+- Около 2–3 МБ RSS в релизной сборке. В простое сторож свапа центра стоит
+  примерно 0.2% одного ядра при пяти окнах и около 0.5% на дереве из 28 окон
+  (один `GET_TREE` раз в 100 мс); без свапа он не отправляет команд. Чисто под
   AddressSanitizer и UndefinedBehaviorSanitizer.
-- 316 unit-проверок и 8 E2E-сценариев (61 проверка), в CI на каждый push, в
-  Release и Debug.
+- 325 unit-проверок и 10 E2E-сценариев (87 проверок), в CI на каждый push,
+  в Release и Debug.
 
 ### Установка
 

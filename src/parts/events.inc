@@ -33,7 +33,8 @@ static void handle_event(int sub_fd, int cmd_fd, json_object *ev) {
   bool need_retile = false;
   bool need_center = false;
   bool closed = false;
-  bool full_retile = false; /* move мастера — обход ВСЕХ столов */
+  bool full_retile = false; /* move мастера или уход в floating/скретчпад —
+                               обход ВСЕХ столов */
   int64_t cid = -1;
   const char *change = jstr(ev, "change");
   json_object *con = jget(ev, "container");
@@ -80,6 +81,13 @@ static void handle_event(int sub_fd, int cmd_fd, json_object *ev) {
       if (is_floating(con)) {
         need_center = true;
         need_retile = true;
+        /* Уход в скретчпад: к моменту get_tree окно уже лежит в
+           __i3_scratch, вне обычных столов. Адресный retile по cid
+           не найдёт его ни на одном ws и молча пропустит старый
+           стол: стопка растянется на весь экран, нового мастера не
+           будет до следующего move. Событие не несёт id старого
+           стола, поэтому обходим все столы. */
+        full_retile = true;
       } else
         need_retile = true;
     } else if (strcmp(change, "move") == 0) {

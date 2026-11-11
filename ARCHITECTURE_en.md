@@ -42,9 +42,12 @@ The architecture grew out of a few hard constraints:
   The only lock is the `flock` that prevents a second instance.
 
 The daemon does not manage floating windows (it only centers them when
-they are created or return to tiling), does not touch the scratchpad,
-and does not intercept manual resizes: the master share is fixed at
-startup (`sway-mstack N`, N = 10..90).
+they are created or return to tiling), does not manage scratchpad
+contents, and does not intercept manual resizes: the master share is
+fixed at startup (`sway-mstack N`, N = 10..90). A `floating` event also
+retiles every workspace: by the time it arrives, a master moved to the
+scratchpad is already outside the normal workspaces, so a targeted
+retile by `con_id` cannot find it.
 
 ---
 
@@ -75,7 +78,9 @@ At startup the daemon:
 
 After that the `poll()` loop runs: parse an `i3-ipc` frame, dispatch it
 to a handler. Commands and tree requests go through the second socket
-so that event traffic is never mixed with replies.
+so that event traffic is never mixed with replies. `poll()` has a
+`WATCHDOG_MS` timeout (100 ms) that runs the center-swap watchdog
+(section 4.5), so an idle daemon wakes up ten times per second.
 
 Shutdown is driven by `SIGTERM`/`SIGINT`: a `g_stop` flag, a clean exit
 from `poll()`, releasing the pending event queue, and closing the
@@ -185,10 +190,31 @@ user is still on this workspace.
 
 ### 4.4. `window::floating`, `window::focus`, `workspace::focus`
 
-`floating` centers the window when it floats and retiles when it
-returns to tiling. `focus` updates the window memory. `workspace::focus`
-updates `g_focus_ws` and resets `g_focus_win` when the workspace
-changes.
+`floating` centers the window when it floats, retiles when it returns to
+tiling, and retiles all workspaces when a master leaves for the
+scratchpad: the event does not carry the old workspace id, and the
+window is already inside `__i3_scratch`. `focus` updates the window
+memory. `workspace::focus` updates `g_focus_ws` and resets `g_focus_win`
+when the workspace changes.
+
+### 4.5. Center-swap watchdog
+
+When a window is dropped on another window's center, Sway's
+`finalize_move` calls `container_swap` and returns **without**
+`window::move`. Focus stays on the dragged container, so there is no
+`window::focus` either: the daemon receives no event at all. Sway also
+copies the sibling's geometry (native 50/50), and the marks remain on
+their old windows.
+
+Every `WATCHDOG_MS` (100 ms) of `poll()` silence the daemon reads the
+tree and checks the invariant: the `_m<ws>` holder must be slot 0. If the
+mark moved into the stack, the workspace is healed by the regular
+`retile_ws`: 0–3 commands (re-mark `_m`/`_s` and `resize 55 ppt`). A
+healthy workspace costs one `GET_TREE`+parse and zero commands;
+workspaces without `_m` or with a mark on a non-slot are left alone. All
+workspaces are checked, so cross-workspace swaps are covered too.
+Measured cost: ~0.2% of one core with five windows and ~0.5% on a
+28-window tree.
 
 ---
 
@@ -324,7 +350,7 @@ without move commands (for example, a single `split vertical` on a flat
 - **Memory** uses fixed arrays for 64 tiles, 256 echo records, and 16
   snapshots; overflow degrades predictably instead of corrupting
   memory.
-- **Floating windows and the scratchpad** are not managed.
+- **Floating windows and scratchpad contents** are not managed.
 
 ---
 
@@ -347,7 +373,7 @@ tests that include `src/main.c` as a whole.
 | `src/parts/echo.inc` | echo cache for move commands |
 | `src/parts/command.inc` | command building and sending |
 | `src/parts/snapshot.inc` | proportions, `Act`, workspace snapshots |
-| `src/parts/retile.inc` | `retile_ws`, `retile_all`, reconcile |
+| `src/parts/retile.inc` | `retile_ws`, `retile_all`, reconcile, center-swap watchdog |
 | `src/parts/spawn.inc` | `spawn_fast`, `death_fast`, verdicts |
 | `src/parts/events.inc` | event handlers and focus lookup |
 | `src/parts/socket.inc` | socket, subscription, `sms.lock` |
@@ -373,9 +399,11 @@ UndefinedBehaviorSanitizer.
 
 `tests/unit/test_main.c` includes `src/main.c` directly with
 `#define main sms_main`. This makes static functions testable without
-extracting them into a separate library. Covered: name escaping, JSON
-accessors, tile collection, proportions, snapshots, echo cache, command
-building, IPC framing, POSIX I/O, focus lookup, and event handling.
+extracting them into a separate library. There are 325 checks now.
+Covered: name escaping, JSON accessors, tile collection, proportions,
+snapshots, echo cache, command building, IPC framing, POSIX I/O, focus
+lookup, event handling, and the master invariant used by the center-swap
+watchdog.
 
 Run:
 
@@ -394,8 +422,9 @@ ctest --test-dir build --output-on-failure
 - assertions go through `swaymsg -t get_tree` and `jq`.
 
 The live user session is never touched. Scenarios: n=1/2/3 geometry,
-master death, zoom, edge moves, rotation, tabbed stack, long names, and
-a second output.
+master death, master to scratchpad, center drop drag (requires `wlrctl`),
+zoom, edge moves, rotation, tabbed stack, long names, and a second
+output. That is 10 scenarios / 87 checks in total.
 
 ```sh
 tests/e2e/run.sh
@@ -414,7 +443,7 @@ tests, and runs E2E in headless Sway on Ubuntu. See
 
 - No manual resize or dynamic master share: it would break the pure
   layout function and the snapshots.
-- No management of floating windows or the scratchpad.
+- No management of floating windows or scratchpad contents.
 - No ARM-specific optimizations; `-march=native` can be disabled.
 - No attempt to smooth vanilla Sway flicker: IPC has no animation
   layer; use SwayFX for that.

@@ -43,7 +43,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config libjson-c-dev \
-            sway foot jq fonts-dejavu-core wget ca-certificates gnupg
+            sway foot jq fonts-dejavu-core wget ca-certificates gnupg \
+            wlrctl
           # Ubuntu's clang 18 lacks C23 constexpr; install a recent LLVM.
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null

@@ -20,6 +20,7 @@ E2E_POLL=${E2E_POLL:-0.1}
 E2E_TRIES=${E2E_TRIES:-100}
 E2E_KEEP=${E2E_KEEP:-0}
 E2E_SKIP_MULTI=${E2E_SKIP_MULTI:-0}
+E2E_SWAY_EXTRA=${E2E_SWAY_EXTRA:-}
 
 E2E_CHECKS=0
 E2E_FAILURES=0
@@ -140,6 +141,12 @@ gaps outer 0
 focus_follows_mouse no
 workspace 1 output HEADLESS-1
 EOF
+
+  # Дополнительные строки конфига для отдельного сценария (например,
+  # рамки окон для drag за заголовок).
+  if [ -n "$E2E_SWAY_EXTRA" ]; then
+    printf '%s\n' "$E2E_SWAY_EXTRA" >>"$E2E_WORK/sway.conf"
+  fi
 
   export XDG_RUNTIME_DIR="$E2E_WORK/run"
   unset WAYLAND_DISPLAY SWAYSOCK I3SOCK
@@ -578,6 +585,54 @@ e2e_close_app() {
 e2e_move() {
   swaymsg "move $1" >/dev/null 2>&1 || true
   e2e_settle
+}
+
+# ── Drag за заголовок (нужен wlrctl) ──
+#
+# Sway получает motion только от настоящего указателя: IPC
+# `seat cursor set/move` двигает wlr_cursor, но не шлёт
+# seatop_pointer_motion. wlrctl создаёт virtual-pointer и шлёт
+# движение, поэтому drag проходит тот же путь finalize_move, что и
+# пользовательский. Заголовок обязателен: default_border normal.
+
+e2e_drag_center() {
+  local src=$1 dst=$2 sj dj sx sy dx dy px py deco_h i x y
+  sj=$(e2e_app_json_any "$src")
+  dj=$(e2e_app_json_any "$dst")
+  if [ -z "$sj" ] || [ -z "$dj" ]; then
+    e2e_fail "drag: окно '$src' или '$dst' не найдено"
+    return 1
+  fi
+
+  deco_h=$(jq -r '.deco_rect.height // 0' <<<"$sj")
+  sx=$(jq -r '(.rect.x + (.rect.width / 2 | floor))' <<<"$sj")
+  if [ "${deco_h:-0}" -gt 0 ]; then
+    # заголовок лежит НАД rect: rect.y — верх клиентской области
+    sy=$(jq -r --argjson h "$deco_h" '.rect.y - ($h / 2 | floor)' <<<"$sj")
+  else
+    sy=$(jq -r '.rect.y + 4' <<<"$sj")
+  fi
+  dx=$(jq -r '(.rect.x + (.rect.width / 2 | floor))' <<<"$dj")
+  dy=$(jq -r '(.rect.y + (.rect.height / 2 | floor))' <<<"$dj")
+
+  swaymsg seat seat0 cursor set "$sx" "$sy" >/dev/null 2>&1 || true
+  sleep 0.15
+  swaymsg seat seat0 cursor press button1 >/dev/null 2>&1 || true
+  sleep 0.15
+  px=$sx
+  py=$sy
+  for ((i = 1; i <= 10; i++)); do
+    x=$((sx + (dx - sx) * i / 10))
+    y=$((sy + (dy - sy) * i / 10))
+    wlrctl pointer move $((x - px)) $((y - py)) >/dev/null 2>&1 || true
+    px=$x
+    py=$y
+    sleep 0.04
+  done
+  sleep 0.2
+  swaymsg seat seat0 cursor release button1 >/dev/null 2>&1 || true
+  e2e_settle 0.5
+  return 0
 }
 
 e2e_create_output() {

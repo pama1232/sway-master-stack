@@ -45,6 +45,8 @@ constexpr int ONE_MAX =
 constexpr int FAST_BATCH =
     ONE_MAX * 6 + 64;              /* слепая пачка — не больше 6 команд */
 constexpr int RETILE_BATCH = 8192; /* буфер пачки retile_ws */
+constexpr int WATCHDOG_MS =
+    100; /* сторож обмена местами: свап центра не даёт событий */
 
 constexpr uint32_t IPC_MAX_LEN = 16u * 1024u * 1024u;
 constexpr uint32_t IPC_EVENT = 0x80000000u;       /* бит события в типе;

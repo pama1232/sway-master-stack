@@ -1,11 +1,12 @@
 # Тесты sway-mstack
 
-Два независимых уровня:
+Два независимых уровня. Сейчас в репозитории 325 unit-проверок и
+10 E2E-сценариев (87 проверок).
 
 | Уровень | Каталог | Что проверяет | Требования |
 | --- | --- | --- | --- |
 | Unit | `tests/unit/` | статические функции демона | CMake, clang, json-c |
-| E2E | `tests/e2e/` | поведение в живом headless Sway | sway, swaymsg, foot, jq |
+| E2E | `tests/e2e/` | поведение в живом headless Sway | sway, swaymsg, foot, jq; `wlrctl` — для `drag_center` |
 
 Unit входит в CTest (`ctest -L unit`). E2E запускается скриптом (или
 через CTest, если проект сконфигурирован с `-DSMS_E2E=ON`).
@@ -32,7 +33,8 @@ Unit входит в CTest (`ctest -L unit`). E2E запускается скр�
 - `ws_guard`, `ws_focus_cmd` — экранирование имён воркспейсов;
 - JSON-доступоры (`jget`, `jarr`, `jstr`, `jint`, `jbool`), `layout_is`,
   `is_floating`, `is_tiled`, `parse_json_exact`;
-- `collect`, `idx_of`, `proportions_ok`, `dead_master_ws`;
+- `collect`, `idx_of`, `proportions_ok`, `dead_master_ws`,
+  `master_out_of_slot` (канон мастера для сторожа свапа центра);
 - снимки воркспейсов (`snap_store`, `snap_get`, LRU, границы имён);
 - кэш эха (`echo_track`, `echo_consume`, TTL, откат, переполнение);
 - построение команд (`cmd_append`, `cmd_struct`, `cmd_move`);
@@ -107,6 +109,8 @@ E2E_FILTER=zoom tests/e2e/run.sh      # только подходящие сце
 | --- | --- |
 | `spawn_geometry` | геометрия n=1/2/3, мастер 55%, стопка 45%, ряды поровну |
 | `master_close` | смерть мастера n=3→2→1, singleton распускается |
+| `master_scratchpad` | уход мастера в скретчпад: новый мастер, стопка 45% |
+| `drag_center` | drag за заголовок в центр: свап без событий, сторож лечит метки и 55/45 |
 | `zoom` | зум низа и вершины стопки, возврат `move right` |
 | `edge_moves` | `move up`/`move down` на мастере, крайние движения |
 | `master_right_rotates` | ротация мастера без памяти `_p` |
@@ -147,6 +151,9 @@ reconcile: раунд 1, команды=0
 Частые причины:
 
 - **`sway` не найден** — установите `sway`, `swaymsg`, `foot`, `jq`;
+- **`drag_center` пропущен** — установите `wlrctl`: без него нельзя
+  подать настоящее движение указателя (IPC `cursor set/move` только
+  варпает курсор и не запускает drag);
 - **`create_output` не поддерживается** — запустите с
   `--skip-multi`; на старых сборках Sway команда может отсутствовать;
 - **таймауты на медленной машине** — увеличьте `E2E_SETTLE` и
@@ -164,7 +171,7 @@ ctest --test-dir build -L e2e --output-on-failure
 ```
 
 E2E помечен таймаутом 900 секунд и не входит в конфигурацию по
-умолчанию: для него нужны Sway, foot и jq.
+умолчанию: для него нужны Sway, foot, jq и (для `drag_center`) `wlrctl`.
 
 ---
 

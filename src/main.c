@@ -205,13 +205,17 @@ int main(int argc, char **argv) {
       json_object_put(ev);
       continue;
     }
-    int r = poll(&pf, 1, -1);
+    int r = poll(&pf, 1, WATCHDOG_MS);
     if (g_stop)
       break;
     if (r < 0) {
       if (errno == EINTR)
         continue;
       break;
+    }
+    if (r == 0) { /* тишина: сторож ловит свап центра без событий */
+      watchdog_check(cmd_fd);
+      continue;
     }
     uint32_t type;
     size_t len;

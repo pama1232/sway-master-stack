@@ -12,6 +12,7 @@
 #   E2E_FILTER=zoom tests/e2e/run.sh      # только сценарии с подстрокой
 #
 # Требования: sway, swaymsg, foot, jq, собранный демон.
+# Для сценария drag_center нужен ещё wlrctl (virtual pointer).
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -122,6 +123,42 @@ t_master_close() {
   e2e_check_rect "$(e2e_app 1)" x 0 2 "n=2→1: x"
   e2e_check_rect "$(e2e_app 1)" width 1280 2 "n=2→1: окно во всю ширину"
   e2e_check_rect "$(e2e_app 1)" height 720 2 "n=2→1: окно во всю высоту"
+}
+
+# Мастер ушёл в скретчпад: вершина стопки сразу становится мастером,
+# стопка остаётся справа, а не растягивается на весь экран.
+t_master_scratchpad() {
+  e2e_spawn_until 1 1 || return 1
+  e2e_spawn_until 2 2 || return 1
+  e2e_spawn_until 3 3 || return 1
+  e2e_spawn_until 4 4 || return 1
+  e2e_wait_master "$(e2e_app 4)" || return 1
+
+  e2e_focus_app "$(e2e_app 4)" || return 1
+  swaymsg 'move scratchpad' >/dev/null 2>&1 || true
+  e2e_wait_leaf 3 || return 1
+  e2e_wait_master "$(e2e_app 3)" || return 1
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 3)" \
+    "scratchpad: новый мастер — вершина стопки"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 2) $(e2e_app 1)" \
+    "scratchpad: порядок стопки"
+  e2e_wait_stack_layout splitv || return 1
+  e2e_check_eq "$(e2e_stack_layout)" splitv "scratchpad: layout стопки"
+  e2e_check_rect "$(e2e_app 3)" x 0 2 "scratchpad: мастер x"
+  e2e_check_rect "$(e2e_app 3)" width 704 2 "scratchpad: мастер ширина"
+  e2e_check_rect "$(e2e_app 3)" height 720 2 "scratchpad: мастер высота"
+  e2e_check_rect "$(e2e_app 2)" x 704 2 "scratchpad: стопка x"
+  e2e_check_rect "$(e2e_app 2)" width 576 2 "scratchpad: стопка ширина"
+  e2e_check_rect "$(e2e_app 2)" height 360 2 "scratchpad: верх стопки высота"
+  e2e_check_rect "$(e2e_app 1)" y 360 2 "scratchpad: низ стопки y"
+
+  # Возврат из скретчпада: окно плавающее, раскладка не меняется.
+  swaymsg 'scratchpad show' >/dev/null 2>&1 || true
+  e2e_settle
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 3)" \
+    "scratchpad show: мастер не изменился"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 2) $(e2e_app 1)" \
+    "scratchpad show: стопка не изменилась"
 }
 
 # Зум: move left на окне стопки делает его мастером, move right
@@ -300,6 +337,47 @@ t_multi_output() {
     "move left: прежний мастер ушёл наверх стопки"
 }
 
+# Свап центра при drag за заголовок: Sway's finalize_move зовёт
+# container_swap без единого события. Сторож (WATCHDOG_MS) обязан
+# привести метки и долю 55/45 сразу после drop, не дожидаясь
+# следующего move. Проверяем оба направления: стопка→мастер и
+# мастер→стопка.
+t_drag_center() {
+  e2e_spawn_until 1 1 || return 1
+  e2e_spawn_until 2 2 || return 1
+  e2e_spawn_until 3 3 || return 1
+  e2e_wait_master "$(e2e_app 3)" || return 1
+
+  # app2 (верх стопки) → центр мастера app3
+  e2e_drag_center "$(e2e_app 2)" "$(e2e_app 3)" || return 1
+  e2e_wait_master "$(e2e_app 2)" || return 1
+  e2e_settle 0.3
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 2)" \
+    "drag стопка→мастер: мастер — перетащенное окно"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 3) $(e2e_app 1)" \
+    "drag стопка→мастер: порядок стопки"
+  e2e_check_eq "$(e2e_leaf_count)" 3 "drag стопка→мастер: окон на столе"
+  e2e_check_rect "$(e2e_app 2)" x 0 2 "drag стопка→мастер: мастер x"
+  e2e_check_rect "$(e2e_app 2)" width 704 2 "drag стопка→мастер: мастер 55%"
+  e2e_check_rect "$(e2e_app 3)" x 704 2 "drag стопка→мастер: стопка x"
+  e2e_check_rect "$(e2e_app 3)" width 576 2 "drag стопка→мастер: стопка 45%"
+
+  # app2 (мастер) → центр app3 (верх стопки): места меняются,
+  # мастером становится app3, app2 уходит наверх стопки.
+  e2e_drag_center "$(e2e_app 2)" "$(e2e_app 3)" || return 1
+  e2e_wait_master "$(e2e_app 3)" || return 1
+  e2e_settle 0.3
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 3)" \
+    "drag мастер→стопка: мастер — окно-цель"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 2) $(e2e_app 1)" \
+    "drag мастер→стопка: порядок стопки"
+  e2e_check_eq "$(e2e_leaf_count)" 3 "drag мастер→стопка: окон на столе"
+  e2e_check_rect "$(e2e_app 3)" x 0 2 "drag мастер→стопка: мастер x"
+  e2e_check_rect "$(e2e_app 3)" width 704 2 "drag мастер→стопка: мастер 55%"
+  e2e_check_rect "$(e2e_app 2)" x 704 2 "drag мастер→стопка: стопка x"
+  e2e_check_rect "$(e2e_app 2)" width 576 2 "drag мастер→стопка: стопка 45%"
+}
+
 # ── Прогон ──
 
 E2E_RUN=0
@@ -327,6 +405,15 @@ run_case() {
 
 run_case spawn_geometry t_spawn_geometry
 run_case master_close t_master_close
+run_case master_scratchpad t_master_scratchpad
+if command -v wlrctl >/dev/null 2>&1; then
+  E2E_SWAY_EXTRA='default_border normal
+default_floating_border normal'
+  run_case drag_center t_drag_center
+  E2E_SWAY_EXTRA=
+else
+  e2e_info "E2E: drag_center пропущен (нет wlrctl)"
+fi
 run_case zoom t_zoom
 run_case edge_moves t_edge_moves
 run_case master_right_rotates t_master_right_rotates
