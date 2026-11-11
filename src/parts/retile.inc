@@ -745,14 +745,14 @@ static void reconcile(int fd) { reconcile_act(fd, &ACT_NONE, 0); }
 
 /* Канон мастера: держатель _m<ws> обязан быть слотом 0. Нет метки,
    одно окно или метка на не-слоте (контейнер/чужой стол) — не наш
-   случай: сторож лечит только свап и не спорит с чужой меткой.
+   случай: watchdog лечит только свап и не спорит с чужой меткой.
    Вынесено отдельно: чистая проверка покрыта unit-тестами. */
 [[nodiscard]] static bool master_out_of_slot(const Tiled *t) {
   return t->n >= 2 && t->master_id > 0 && t->master_id != t->id[0] &&
          idx_of(t, t->master_id) > 0;
 }
 
-/* ── СТОРОЖ ОБМЕНА МЕСТАМИ. Sway's center-drop drag calls
+/* ── WATCHDOG ОБМЕНА МЕСТАМИ. Sway's center-drop drag calls
    container_swap() in finalize_move() and returns БЕЗ window::move;
    фокус остаётся на перетащенном контейнере, поэтому window::focus
    тоже нет — демон не узнаёт о свапе из событий вообще. Единственный
@@ -782,12 +782,12 @@ static bool heal_misplaced_ws(int fd, json_object *root, json_object *ws) {
   collect(ws, ws, mk_m, mk_s, mk_p, &t);
   /* n<2 — свап центра невозможен; метки одиночек лечит обычный путь
      событий. Нет _m — не наш случай: метку мог снять пользователь,
-     а сторож не должен спорить с ним на каждом тике. */
+     а watchdog не должен спорить с ним на каждом тике. */
   if (!master_out_of_slot(&t))
     return false;
   if (g_debug)
     fprintf(stderr,
-            "сторож: ws=%" PRId64 " _m=%" PRId64 " не в слоте 0 (%" PRId64
+            "watchdog: ws=%" PRId64 " _m=%" PRId64 " не в слоте 0 (%" PRId64
             ") — ретайл\n",
             wid, t.master_id, t.id[0]);
   return retile_ws(fd, root, ws, &ACT_NONE);

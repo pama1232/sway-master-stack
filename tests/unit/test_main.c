@@ -408,7 +408,7 @@ static void test_proportions(void) {
   MASTER_PCT = 55;
 }
 
-/* ══════════════ master_out_of_slot (сторож свапа) ══════════════ */
+/* ══════════════ master_out_of_slot (watchdog свапа) ══════════════ */
 
 static void test_master_out_of_slot(void) {
   json_object *ws = json(TREE_FIXTURE);

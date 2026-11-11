@@ -34,7 +34,7 @@ Unit входит в CTest (`ctest -L unit`). E2E запускается скр�
 - JSON-доступоры (`jget`, `jarr`, `jstr`, `jint`, `jbool`), `layout_is`,
   `is_floating`, `is_tiled`, `parse_json_exact`;
 - `collect`, `idx_of`, `proportions_ok`, `dead_master_ws`,
-  `master_out_of_slot` (канон мастера для сторожа свапа центра);
+  `master_out_of_slot` (канон мастера для watchdog свапа центра);
 - снимки воркспейсов (`snap_store`, `snap_get`, LRU, границы имён);
 - кэш эха (`echo_track`, `echo_consume`, TTL, откат, переполнение);
 - построение команд (`cmd_append`, `cmd_struct`, `cmd_move`);
@@ -110,7 +110,7 @@ E2E_FILTER=zoom tests/e2e/run.sh      # только подходящие сце
 | `spawn_geometry` | геометрия n=1/2/3, мастер 55%, стопка 45%, ряды поровну |
 | `master_close` | смерть мастера n=3→2→1, singleton распускается |
 | `master_scratchpad` | уход мастера в скретчпад: новый мастер, стопка 45% |
-| `drag_center` | drag за заголовок в центр: свап без событий, сторож лечит метки и 55/45 |
+| `drag_center` | drag за заголовок в центр: свап без событий, watchdog лечит метки и 55/45 |
 | `zoom` | зум низа и вершины стопки, возврат `move right` |
 | `edge_moves` | `move up`/`move down` на мастере, крайние движения |
 | `master_right_rotates` | ротация мастера без памяти `_p` |

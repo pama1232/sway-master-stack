@@ -213,7 +213,7 @@ int main(int argc, char **argv) {
         continue;
       break;
     }
-    if (r == 0) { /* тишина: сторож ловит свап центра без событий */
+    if (r == 0) { /* тишина: watchdog ловит свап центра без событий */
       watchdog_check(cmd_fd);
       continue;
     }
