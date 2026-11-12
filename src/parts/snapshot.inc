@@ -47,6 +47,7 @@ typedef struct {
   char name[WSNAME_MAX];    /* имя ws для гварда workspace="…" */
   int64_t master;           /* мастер (для слепого спавна) */
   int64_t partner;          /* держатель _p<ws>, -1 = памяти нет */
+  bool flat;                /* мастер — прямой ребёнок ws (слепой спавн) */
   int n;                    /* окон в стопке */
   int64_t stack[TILED_MAX]; /* порядок стопки сверху вниз */
   uint64_t tick;            /* LRU по ЧТЕНИЯМ */
@@ -110,6 +111,7 @@ static void snap_store(int64_t ws, const char *name, size_t name_len,
   }
   s->master = master;
   s->partner = -1; /* неизвестен: snap_store_tiles уточнит из Tiled */
+  s->flat = false;
   s->n = n;
   if (n > 0)
     memcpy(s->stack, stack, (size_t)n * sizeof stack[0]);
@@ -132,8 +134,14 @@ static void snap_store_tiles(int64_t wid, json_object *ws, const Tiled *t) {
      снимок), поэтому здесь partner точен: слепые spawn/death могут
      не тратить команду unmark, когда памяти на столе нет. */
   Snap *s = snap_get(wid);
-  if (s != nullptr)
+  if (s != nullptr) {
     s->partner = t->partner_id;
+    /* слепой спавн свапает новичка с mark _m: пачка безопасна,
+       только если мастер — прямой ребёнок ws. Обёртка-singleton
+       (уход мастера в скретчпад и т.п.) ловит новичка внутрь,
+       и слепая пачка только усугубляет вложенность. */
+    s->flat = (t->n > 0 && t->parent[0] == ws);
+  }
 }
 
 /* ws, на котором умер держатель _m — из marks закрытого окна; 0 = нет.

@@ -6,6 +6,25 @@
 
 #include "../sms.h"
 
+/* Контейнер — прямой ребёнок стола? Нужен и ретайлу (обёртку вокруг
+   стопки распускаем split none по самому контейнеру), и watchdog'у
+   (обёрнутая стопка — структурный дрейф, даже если листья внутри
+   собраны в правильный splitv). */
+[[nodiscard]] static bool con_direct_child(json_object *ws,
+                                           json_object *con) {
+  if (ws == nullptr || con == nullptr)
+    return false;
+  int64_t cid = jint(con, "id");
+  json_object *nodes = jarr(ws, "nodes");
+  if (nodes == nullptr)
+    return false;
+  size_t cnt = json_object_array_length(nodes);
+  for (size_t i = 0; i < cnt; i++)
+    if (jint(json_object_array_get_idx(nodes, i), "id") == cid)
+      return true;
+  return false;
+}
+
 /* ── Retile: канонический ребилд одного воркспейса.
  * Возвращает: отправлялись ли команды вообще (стол был болен).
  * Пачка, менявшая порядок/структуру, гасит снимок — вызывающий путь
@@ -332,43 +351,44 @@ static bool retile_ws(int fd, json_object *root, json_object *ws,
        «побег» и висячее эхо от no-op move) */
   }
 
-  /* ═══ ПОБЕГ ИЗ ПЛЕНА: мастер не на уровне ws — «move left».
-     Встаёт ПЕРВЫМ ребёнком ws, ws=splith, контейнер стопки жив.
+  /* ═══ ПОБЕГ ИЗ ПЛЕНА: мастер не на уровне ws — вытаскиваем его
+     ПЕРВЫМ ребёнком ws, ws=splith, контейнер стопки жив.
 
      ТРИ гварда на вход:
      (1) t.n > 1 — иначе move left на синглтоне = ВАРП НА СОСЕДНИЙ
          ВЫХОД (i3-семантика «singleton children as if at workspace
          level»).
-     (2) sib >= 2 — сколько тайлов в обёртке мастера (t.parent[0]).
-         Если 1 — обёртка-singleton: move left M трактуется sway
-         как move left обёртки; если обёртка при этом первый ребёнок
-         ws — ВАРП. t.n > 1 сам по себе НЕ гарантирует соседа: при
-         ws=[wrapper[M], N] t.n=2, но wrapper содержит только M.
-         Требуем реального соседа в обёртке: move left остаётся
-         внутри обёртки (промоут), не выходит на уровень ws.
-         Fallback — общий путь ниже: визуально канон сохранится
-         (M на весь свой слот), варпа не будет.
-     (3) tabbed/stacked-тюрьма — move left там переключение ТАБОВ
-         (no-op без эха!) — сначала превращаем её в splitv (layout
-         по листу целит в родителя), потом побег.
+     (2) обёртка мастера. t.n > 1 сам по себе НЕ гарантирует соседа:
+         при ws=[wrapper[M], N] t.n=2, но wrapper содержит только M.
+         Если у родителя мастера ОДИН ребёнок — распускаем обёртку
+         через split none: container_flatten идёт вверх, пока у
+         предков по одному ребёнку, и НЕ варпает окно.
+         Если детей ≥2 — move left выносит мастера на уровень ws
+         (замерено). Перед ним layout splitv: в splith-ряду или
+         tabbed/stacked move left остался бы внутри обёртки
+         (промоут/смена таба).
+     (3) tabbed/stacked-тюрьма — тем же layout splitv приводим
+         обёртку к splitv, затем побег.
 
      parent[0] = ws обновляем вручную: общий путь ниже рассчитан
      на «мастер уже на уровне ws», ему это нужно знать. ═══ */
   bool escaped = false;
-  int sib = 0;
-  if (t.parent[0] != ws)
-    for (int i = 0; i < t.n; i++)
-      if (t.parent[i] == t.parent[0])
-        sib++;
-  if (t.parent[0] != ws && t.n > 1 && sib >= 2) {
-    const char *pl = jstr(t.parent[0], "layout");
-    if (pl != nullptr &&
-        (strcmp(pl, "tabbed") == 0 || strcmp(pl, "stacked") == 0)) {
-      snprintf(one, sizeof one, "[con_id=%" PRId64 "] layout splitv", t.id[0]);
+  if (t.parent[0] != ws && t.n > 1) {
+    json_object *pw = t.parent[0];
+    json_object *pch = jarr(pw, "nodes");
+    size_t pn = (pch != nullptr) ? json_object_array_length(pch) : 0;
+    const char *pl = jstr(pw, "layout");
+    if (pn <= 1) {
+      snprintf(one, sizeof one, "[con_id=%" PRId64 "] split none", t.id[0]);
       cmd_struct(buf, sizeof buf, &off, one);
+    } else {
+      if (pl == nullptr || strcmp(pl, "splitv") != 0) {
+        snprintf(one, sizeof one, "[con_id=%" PRId64 "] layout splitv", t.id[0]);
+        cmd_struct(buf, sizeof buf, &off, one);
+      }
+      snprintf(one, sizeof one, "[con_id=%" PRId64 "] move left", t.id[0]);
+      cmd_move(buf, sizeof buf, &off, one, t.id[0]);
     }
-    snprintf(one, sizeof one, "[con_id=%" PRId64 "] move left", t.id[0]);
-    cmd_move(buf, sizeof buf, &off, one, t.id[0]);
     t.parent[0] = ws;
     escaped = true;
   } else if (t.parent[0] == ws && !layout_is(ws, "splith") && t.n > 1) {
@@ -539,8 +559,34 @@ static bool retile_ws(int fd, json_object *root, json_object *ws,
   if (t.n == 1)
     goto finish;
 
-  /* ═══ СТОПКА: якорь — первый не-мастер, УЖЕ живущий в контейнере;
-     если все плоско (рождение/частокол) — tiled[1] ═══ */
+  /* ═══ n==2: КАНОН — ДВА ПРЯМЫХ СОСЕДА, без контейнера стопки.
+     Контейнер вокруг единственного окна стопки не нужен геометрии
+     (55/45 дают два листа), но именно он ломает нативный swap:
+     move right на мастере втягивает его ВНУТРЬ обёртки и на кадре
+     стол схлопывается в полноэкранный splitv (визуальный «через
+     верх»). Без обёртки Sway меняет два соседа местами горизонтально
+     в обе стороны. Наследие n>=3 (обёртка-singleton) распускаем
+     split none: parent с одним ребёнком, окно не варпается. ═══ */
+  if (t.n == 2) {
+    int64_t s = t.id[1];
+    if (t.parent[1] != ws) {
+      snprintf(one, sizeof one, "[con_id=%" PRId64 "] split none", s);
+      cmd_struct(buf, sizeof buf, &off, one);
+    }
+    if (t.stack_id != s) {
+      snprintf(one, sizeof one, "[con_id=%" PRId64 "] mark --add %s", s, mk_s);
+      cmd_append(buf, sizeof buf, &off, one);
+    }
+    if (escaped || !proportions_ok(&t, t.rw[1])) {
+      snprintf(one, sizeof one, "[con_id=%" PRId64 "] resize set width %d ppt", m,
+               MASTER_PCT);
+      cmd_append(buf, sizeof buf, &off, one);
+    }
+    goto finish;
+  }
+
+  /* ═══ СТОПКА (n>=3): якорь — первый не-мастер, УЖЕ живущий в
+     контейнере; если все плоско (рождение/частокол) — tiled[1] ═══ */
   int ai = 1;
   for (int i = 1; i < t.n; i++)
     if (t.parent[i] != ws) {
@@ -550,6 +596,19 @@ static bool retile_ws(int fd, json_object *root, json_object *ws,
   int64_t a = t.id[ai];
   json_object *ac = t.parent[ai];
   bool flat = (ac == ws);
+
+  /* ═══ ОБЁРТКА ВОКРУГ СТОПКИ: Sway оставляет singleton-контейнер
+     после ухода/смерти соседа; move-сбор из него не вылезает, а
+     top-level канон нарушен. split none по ac распускает его
+     родителя (do_unsplit требует ровно одного ребёнка) — стек
+     снова прямой ребёнок ws. Если в обёртке есть ещё листья, их
+     сначала вывезет общий сбор ниже, а split none добьёт
+     контрольный раунд. ═══ */
+  if (!flat && !con_direct_child(ws, ac)) {
+    snprintf(one, sizeof one, "[con_id=%" PRId64 "] split none",
+             jint(ac, "id"));
+    cmd_struct(buf, sizeof buf, &off, one);
+  }
 
   /* ═══ СНЯТЫЙ МАСТЕР (контрольный раунд): держатель _m — не мастер
      и ВНЕ контейнера стопки → он бывший мастер → вершина (dwm).
@@ -745,28 +804,60 @@ static void reconcile(int fd) { reconcile_act(fd, &ACT_NONE, 0); }
 
 /* Канон мастера: держатель _m<ws> обязан быть слотом 0. Нет метки,
    одно окно или метка на не-слоте (контейнер/чужой стол) — не наш
-   случай: watchdog лечит только свап и не спорит с чужой меткой.
+   случай: watchdog не спорит с чужой меткой.
    Вынесено отдельно: чистая проверка покрыта unit-тестами. */
 [[nodiscard]] static bool master_out_of_slot(const Tiled *t) {
   return t->n >= 2 && t->master_id > 0 && t->master_id != t->id[0] &&
          idx_of(t, t->master_id) > 0;
 }
 
-/* ── WATCHDOG ОБМЕНА МЕСТАМИ. Sway's center-drop drag calls
-   container_swap() in finalize_move() and returns БЕЗ window::move;
-   фокус остаётся на перетащенном контейнере, поэтому window::focus
-   тоже нет — демон не узнаёт о свапе из событий вообще. Единственный
-   источник истины — дерево. Раз в WATCHDOG_MS читаем его и проверяем
-   канон: держатель _m<ws> обязан быть слотом 0. После свапа мастер и
-   вершина стопки меняются местами, метки остаются на окнах — _m
-   оказывается в стопке, и это ровно тот нездоровый случай. Стол
-   лечится обычным retile_ws (0 или 2-3 команды: переметка + resize).
-   Здоровый стол стоит один GET_TREE+parse и НОЛЬ команд; столы без
-   свапа (n<2) даже не собираются. Кросс-стол свап тоже виден: у
-   каждого стола свой _m, поэтому проверяем все, а не только
-   сфокусированный. ── */
+/* ── Дрейф структуры (для расширенного watchdog). Кроме свапа
+   центра без событий бывают «тихие» перекосы: ручной layout,
+   singleton-обёртка после ухода/смерти соседа, плоский частокол.
+   retile_ws умеет их лечить, но событий, которые его зовут, нет.
+   Проверяем только состояния с живой _m и n>=2: без метки или на
+   одном окне watchdog не спорит с пользователем.
+   tabbed/stacked стопки — легальный выбор юзера, их не трогаем;
+   splith в стопке — ряд узких полос (симптом ручного layout). ── */
+[[nodiscard]] static bool structure_drift(const Tiled *t, json_object *ws) {
+  if (t->n < 2 || t->master_id <= 0)
+    return false;
+  if (master_out_of_slot(t))
+    return true;
+  if (t->parent[0] != ws)
+    return true; /* мастер заперт в контейнере */
+  if (!layout_is(ws, "splith"))
+    return true; /* стол перевёрнут в splitv/tabbed/stacked */
+  if (t->n == 2)
+    return t->parent[1] != ws; /* n==2 канон плоский: оба соседи */
+  json_object *sc = nullptr;
+  for (int i = 1; i < t->n; i++) {
+    if (t->parent[i] == ws)
+      return true; /* не-мастер на уровне ws: стопка не собрана */
+    if (sc == nullptr)
+      sc = t->parent[i];
+    else if (t->parent[i] != sc)
+      return true; /* стопка разъехалась по контейнерам */
+  }
+  if (sc == nullptr)
+    return true;
+  if (!con_direct_child(ws, sc))
+    return true; /* контейнер стопки заперт в обёртке */
+  return layout_is(sc, "splith"); /* ряд полос вместо колонки */
+}
 
-static bool heal_misplaced_ws(int fd, json_object *root, json_object *ws) {
+/* ── WATCHDOG. Sway's center-drop drag calls container_swap() in
+   finalize_move() and returns БЕЗ window::move; фокус остаётся на
+   перетащенном контейнере, поэтому window::focus тоже нет — демон
+   не узнаёт о свапе из событий вообще. Тихие layout-команды и
+   обёртки-singleton дают такой же дрейф. Единственный источник
+   истины — дерево. Раз в WATCHDOG_MS читаем его и проверяем канон:
+   _m в слоте 0, мастер — прямой ребёнок ws, стол splith, стопка не
+   splith. Стол лечится обычным retile_ws (0 или 2-3 команды).
+   Здоровый стол стоит один GET_TREE+parse и НОЛЬ команд; столы без
+   метки/с одним окном даже не считаются больными. ── */
+
+static bool heal_ws_drift(int fd, json_object *root, json_object *ws) {
   int64_t wid = jint(ws, "id");
   if (wid <= 0)
     return false;
@@ -780,17 +871,18 @@ static bool heal_misplaced_ws(int fd, json_object *root, json_object *ws) {
   t.stack_id = -1;
   t.partner_id = -1;
   collect(ws, ws, mk_m, mk_s, mk_p, &t);
-  /* n<2 — свап центра невозможен; метки одиночек лечит обычный путь
-     событий. Нет _m — не наш случай: метку мог снять пользователь,
-     а watchdog не должен спорить с ним на каждом тике. */
-  if (!master_out_of_slot(&t))
+  if (!structure_drift(&t, ws))
     return false;
   if (g_debug)
     fprintf(stderr,
-            "watchdog: ws=%" PRId64 " _m=%" PRId64 " не в слоте 0 (%" PRId64
-            ") — ретайл\n",
-            wid, t.master_id, t.id[0]);
-  return retile_ws(fd, root, ws, &ACT_NONE);
+            "watchdog: ws=%" PRId64 " дрейф структуры (n=%d p0ws=%d splith=%d "
+            "_m=%" PRId64 " slot0=%" PRId64 ") — ретайл\n",
+            wid, t.n, t.parent[0] == ws, layout_is(ws, "splith"), t.master_id,
+            t.id[0]);
+  bool sent = retile_ws(fd, root, ws, &ACT_NONE);
+  if (!sent) /* дрейф есть, команд нет: следующий тик обязан повторить */
+    wd_raw_forget();
+  return sent;
 }
 
 static bool heal_walk(int fd, json_object *root, json_object *n,
@@ -798,7 +890,7 @@ static bool heal_walk(int fd, json_object *root, json_object *n,
   const char *type = jstr(n, "type");
   if (type != nullptr && strcmp(type, "workspace") == 0) {
     uint64_t before = g_struct_sent;
-    bool cmd = heal_misplaced_ws(fd, root, n);
+    bool cmd = heal_ws_drift(fd, root, n);
     if (cmd && g_struct_sent > before)
       *structural = true;
     return cmd;
@@ -814,14 +906,20 @@ static bool heal_walk(int fd, json_object *root, json_object *n,
 }
 
 static void watchdog_check(int fd) {
-  json_object *tree = get_tree(fd);
+  json_object *tree = get_tree_watchdog(fd);
   if (tree == nullptr)
-    return;
+    return; /* дерево не изменилось или ответ нечитаем */
   bool structural = false;
   bool any = heal_walk(fd, tree, tree, &structural);
   json_object_put(tree);
-  if (any && structural)
-    reconcile(fd);
+  if (any) {
+    /* Лечение отправляло команды — кэш сырого дерева устарел.
+       Следующий тик обязан перечитать результат, даже если Sway
+       ответил на команды молчанием. */
+    wd_raw_forget();
+    if (structural)
+      reconcile(fd);
+  }
 }
 
 /* найти узел workspace по id; воркспейсы не вложены — нашли или нет */

@@ -18,8 +18,10 @@
 
    Стопка пуста (e->n == 0, был только мастер X): N свапнут с mark _m
    на место X; X после swap — отдельный узел справа от N. Пачка сразу
-   доделывает канон: mark _s X, split vertical X, resize N в M% ppt.
-   Без этих трёх команд reconcile сделал бы их во втором раунде
+   доделывает канон n==2: mark _s X и resize N в M% ppt. Контейнер
+   стопки не создаём: два прямых соседа дают нативный горизонтальный
+   swap в обе стороны (без полноэкранного splitv на кадре).
+   Без этих команд reconcile сделал бы их во втором раунде
    после get_tree — лишний кадр и мерцание.
 
    SIDE-EFFECT MOVE: swap с мастером и move container сдвигают соседей
@@ -34,6 +36,8 @@ static bool spawn_fast(int fd, int64_t nid) {
   Snap *e = snap_get(g_focus_ws);
   if (e == nullptr || e->master <= 0 || e->name[0] == '\0')
     return false; /* нет свежего снимка — честный путь */
+  if (!e->flat)
+    return false; /* мастер не прямой ребёнок ws — честный retile */
   char g[GUARD_MAX];
   if (!ws_guard(g, sizeof g, e->name))
     return false; /* имя не экранируется — честный путь */
@@ -72,14 +76,13 @@ static bool spawn_fast(int fd, int64_t nid) {
              e->master, g, mk_s);
     cmd_append(buf, sizeof buf, &off, one);
   } else {
-    /* e->n == 0: X был один; после swap X справа от N — обернуть
-       в splitv и пометить _s, затем пропорция N */
+    /* e->n == 0: X был один; после swap X справа от N — прямой
+       сосед. Канон n==2 плоский: только метка _s, без split
+       vertical (обёртка вокруг одного окна ломает нативный swap
+       и плодит singleton-баги). Затем пропорция N. */
     snprintf(one, sizeof one, "[con_id=%" PRId64 " %s] mark --add %s",
              e->master, g, mk_s);
     cmd_append(buf, sizeof buf, &off, one);
-    snprintf(one, sizeof one, "[con_id=%" PRId64 " %s] split vertical",
-             e->master, g);
-    cmd_struct(buf, sizeof buf, &off, one);
     snprintf(one, sizeof one, "[con_id=%" PRId64 " %s] resize set width %d ppt",
              nid, g, MASTER_PCT);
     cmd_append(buf, sizeof buf, &off, one);

@@ -78,7 +78,7 @@ t_spawn_geometry() {
   e2e_spawn_until 2 2 || return 1
   e2e_check_eq "$(e2e_master_app)" "$(e2e_app 2)" "n=2: мастер — новое окно"
   e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 1)" "n=2: стопка"
-  e2e_check_eq "$(e2e_stack_layout)" splitv "n=2: layout стопки"
+  e2e_check_eq "$(e2e_stack_layout)" none "n=2: layout стопки (плоский канон)"
   e2e_check_rect "$(e2e_app 2)" x 0 2 "n=2: мастер x"
   e2e_check_rect "$(e2e_app 2)" width 704 2 "n=2: мастер ширина (55%)"
   e2e_check_rect "$(e2e_app 2)" height 720 2 "n=2: мастер высота"
@@ -113,7 +113,7 @@ t_master_close() {
   e2e_wait_master "$(e2e_app 2)" || return 1
   e2e_check_eq "$(e2e_master_app)" "$(e2e_app 2)" "n=3→2: мастер — вершина стопки"
   e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 1)" "n=3→2: стопка"
-  e2e_check_eq "$(e2e_stack_layout)" splitv "n=3→2: layout стопки"
+  e2e_check_eq "$(e2e_stack_layout)" none "n=3→2: layout стопки (плоский канон)"
   e2e_check_rect "$(e2e_app 2)" width 704 2 "n=3→2: мастер ширина"
 
   e2e_close_app "$(e2e_app 2)" || return 1
@@ -190,6 +190,71 @@ t_zoom() {
   e2e_wait_master "$(e2e_app 3)" || return 1
   e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 2) $(e2e_app 1)" \
     "возврат вершины: порядок восстановлен"
+}
+
+# Канон n=2 — два прямых соседа без обёртки стопки. Оба направления
+# (master->stack и stack->master) должны менять окна местами нативным
+# горизонтальным swap, без промежуточного полноэкранного splitv.
+t_n2_swap() {
+  e2e_spawn_until 1 1 || return 1
+  e2e_spawn_until 2 2 || return 1
+  e2e_wait_master "$(e2e_app 2)" || return 1
+  e2e_check_eq "$(e2e_stack_layout)" none "n=2 swap: плоский канон"
+
+  # мастер -> стопка
+  e2e_focus_app "$(e2e_app 2)" || return 1
+  e2e_move right
+  e2e_wait_master "$(e2e_app 1)" || return 1
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 1)" "n=2: мастер->стопка"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 2)" "n=2: стопка после swap"
+  e2e_check_eq "$(e2e_stack_layout)" none "n=2: layout после swap"
+  e2e_check_rect "$(e2e_app 1)" x 0 2 "n=2: мастер x после swap"
+  e2e_check_rect "$(e2e_app 1)" width 704 2 "n=2: мастер ширина после swap"
+  e2e_check_rect "$(e2e_app 1)" height 720 2 "n=2: мастер высота после swap"
+  e2e_check_rect "$(e2e_app 2)" x 704 2 "n=2: стопка x после swap"
+  e2e_check_rect "$(e2e_app 2)" width 576 2 "n=2: стопка ширина после swap"
+  e2e_check_rect "$(e2e_app 2)" height 720 2 "n=2: стопка высота после swap"
+
+  # стопка -> мастер: возврат
+  e2e_focus_app "$(e2e_app 2)" || return 1
+  e2e_move left
+  e2e_wait_master "$(e2e_app 2)" || return 1
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 2)" "n=2: стопка->мастер"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 1)" "n=2: стопка после возврата"
+  e2e_check_eq "$(e2e_stack_layout)" none "n=2: layout после возврата"
+  e2e_check_rect "$(e2e_app 2)" x 0 2 "n=2: мастер x после возврата"
+  e2e_check_rect "$(e2e_app 2)" width 704 2 "n=2: мастер ширина после возврата"
+  e2e_check_rect "$(e2e_app 1)" x 704 2 "n=2: стопка x после возврата"
+  e2e_check_rect "$(e2e_app 1)" width 576 2 "n=2: стопка ширина после возврата"
+}
+
+# Мастер ушёл в скретчпад (n=2 -> 1), затем спавн: выжившее окно
+# становится стопкой, новое — мастером, оба прямые соседи. Регрессия
+# на «стол схлопнулся в вертикальный стек» после spawn.
+t_scratch_spawn() {
+  e2e_spawn_until 1 1 || return 1
+  e2e_spawn_until 2 2 || return 1
+  e2e_wait_master "$(e2e_app 2)" || return 1
+
+  e2e_focus_app "$(e2e_app 2)" || return 1
+  swaymsg 'move scratchpad' >/dev/null 2>&1 || true
+  e2e_wait_leaf 1 || return 1
+  e2e_wait_master "$(e2e_app 1)" || return 1
+
+  e2e_spawn_until 3 2 || return 1
+  e2e_wait_master "$(e2e_app 3)" || return 1
+  e2e_check_eq "$(e2e_master_app)" "$(e2e_app 3)" \
+    "скретчпад+spawn: новое окно — мастер"
+  e2e_check_eq "$(e2e_stack_apps)" "$(e2e_app 1)" \
+    "скретчпад+spawn: выжившее окно — стопка"
+  e2e_check_eq "$(e2e_stack_layout)" none \
+    "скретчпад+spawn: плоский канон n=2"
+  e2e_check_rect "$(e2e_app 3)" x 0 2 "скретчпад+spawn: мастер x"
+  e2e_check_rect "$(e2e_app 3)" width 704 2 "скретчпад+spawn: мастер ширина"
+  e2e_check_rect "$(e2e_app 3)" height 720 2 "скретчпад+spawn: мастер высота"
+  e2e_check_rect "$(e2e_app 1)" x 704 2 "скретчпад+spawn: стопка x"
+  e2e_check_rect "$(e2e_app 1)" width 576 2 "скретчпад+spawn: стопка ширина"
+  e2e_check_rect "$(e2e_app 1)" height 720 2 "скретчпад+spawn: стопка высота"
 }
 
 # Крайние движения мастера: up отправляет мастера наверх стопки и
@@ -415,6 +480,8 @@ else
   e2e_info "E2E: drag_center пропущен (нет wlrctl)"
 fi
 run_case zoom t_zoom
+run_case n2_swap t_n2_swap
+run_case scratch_spawn t_scratch_spawn
 run_case edge_moves t_edge_moves
 run_case master_right_rotates t_master_right_rotates
 run_case tabbed_stack t_tabbed_stack

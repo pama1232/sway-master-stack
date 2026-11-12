@@ -85,22 +85,71 @@ static void send_cmd(int fd, const char *cmd) {
   free(reply);
 }
 
+/* Один GET_TREE: отправка и чтение сырого ответа. Разбор отдельно —
+   watchdog умеет пропускать его, если дерево байт в байт прежнее. */
+[[nodiscard]] static uint8_t *get_tree_payload(int fd, size_t *len_out) {
+  uint32_t type;
+  if (!ipc_send(fd, GET_TREE, nullptr, 0))
+    return nullptr;
+  uint8_t *buf = ipc_recv(fd, &type, len_out);
+  if (buf == nullptr)
+    return nullptr;
+  if (g_debug)
+    fprintf(stderr, "tree: read\n");
+  return buf;
+}
+
 [[nodiscard]] static json_object *get_tree(int fd) {
   for (int attempt = 0; attempt < 2; attempt++) {
-    uint32_t type;
     size_t len;
-    if (!ipc_send(fd, GET_TREE, nullptr, 0))
-      return nullptr;
-    uint8_t *buf = ipc_recv(fd, &type, &len);
+    uint8_t *buf = get_tree_payload(fd, &len);
     if (buf == nullptr)
       return nullptr;
-    if (g_debug)
-      fprintf(stderr, "tree: read\n");
     json_object *tree = parse_json_exact((const char *)buf, len);
     free(buf);
     if (tree != nullptr)
       return tree;
     /* пустой/битый ответ — одна повторная попытка */
+  }
+  return nullptr;
+}
+
+/* ── Кэш сырого дерева для watchdog. В простое Sway отдаёт один и
+   тот же JSON каждые WATCHDOG_MS; разбор json-c (~90 мкс на дереве из
+   5 окон) дороже сравнения байт (~1 мкс). Если ответ не изменился,
+   layout заведомо тот же — парсим только изменения. Кэш живёт только
+   в watchdog: после лечения он сбрасывается, чтобы следующий тик
+   честно перечитал результат команд. ── */
+
+static uint8_t *g_wd_raw = nullptr;
+static size_t g_wd_raw_len = 0;
+static bool g_wd_raw_valid = false;
+
+static void wd_raw_forget(void) { g_wd_raw_valid = false; }
+
+[[nodiscard]] static json_object *get_tree_watchdog(int fd) {
+  for (int attempt = 0; attempt < 2; attempt++) {
+    size_t len;
+    uint8_t *buf = get_tree_payload(fd, &len);
+    if (buf == nullptr)
+      return nullptr;
+    if (g_wd_raw_valid && len == g_wd_raw_len &&
+        memcmp(buf, g_wd_raw, len) == 0) {
+      free(buf);
+      if (g_debug)
+        fprintf(stderr, "tree: same\n");
+      return nullptr;
+    }
+    json_object *tree = parse_json_exact((const char *)buf, len);
+    if (tree == nullptr) {
+      free(buf);
+      continue; /* битый ответ — та же повторная попытка */
+    }
+    free(g_wd_raw);
+    g_wd_raw = buf; /* владение переходит кэшу, без копии */
+    g_wd_raw_len = len;
+    g_wd_raw_valid = true;
+    return tree;
   }
   return nullptr;
 }

@@ -449,6 +449,182 @@ static void test_master_out_of_slot(void) {
   CHECK(!master_out_of_slot(&one)); /* метка на не-слоте — не спорим */
 }
 
+/* ══════════════ structure_drift (расширенный watchdog) ══════════════ */
+
+static void test_structure_drift(void) {
+  json_object *ws = json(TREE_FIXTURE);
+  Tiled t = empty_tiled();
+  collect(ws, ws, "_m4", "_s4", "_p4", &t);
+  CHECK(!structure_drift(&t, ws)); /* канон */
+  json_object_put(ws);
+
+  /* свап центра: _m уехал в стопку */
+  json_object *sw = json("{\"id\":4,\"type\":\"workspace\","
+                         "\"layout\":\"splith\",\"nodes\":["
+                         "{\"id\":20,\"type\":\"con\",\"marks\":[\"_s4\"]},"
+                         "{\"id\":11,\"type\":\"con\",\"layout\":\"splitv\","
+                         "\"nodes\":["
+                         "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+                         "{\"id\":30,\"type\":\"con\",\"marks\":[]}]}]}");
+  Tiled s = empty_tiled();
+  collect(sw, sw, "_m4", "_s4", "_p4", &s);
+  CHECK(structure_drift(&s, sw));
+  json_object_put(sw);
+
+  /* мастер заперт в singleton-обёртке (скретчпад/смерть соседа) */
+  json_object *wrap =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":65,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":62,\"type\":\"con\",\"marks\":[\"_m4\"]}]},"
+           "{\"id\":66,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":63,\"type\":\"con\",\"marks\":[\"_s4\"]}]}]}");
+  Tiled w = empty_tiled();
+  collect(wrap, wrap, "_m4", "_s4", "_p4", &w);
+  CHECK(w.parent[0] != wrap && structure_drift(&w, wrap));
+  json_object_put(wrap);
+
+  /* n==2 канон плоский: два прямых соседа */
+  json_object *flat =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":20,\"type\":\"con\",\"marks\":[\"_s4\"]}]}");
+  Tiled f = empty_tiled();
+  collect(flat, flat, "_m4", "_s4", "_p4", &f);
+  CHECK(!structure_drift(&f, flat));
+  json_object_put(flat);
+
+  /* n==2, но окно стопки заперто в singleton-обёртке — дрейф */
+  json_object *wrap2 =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":21,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[\"_s4\"]}]}]}");
+  Tiled w2 = empty_tiled();
+  collect(wrap2, wrap2, "_m4", "_s4", "_p4", &w2);
+  CHECK(w2.parent[1] != wrap2 && structure_drift(&w2, wrap2));
+  json_object_put(wrap2);
+
+  /* стол перевёрнут в splitv */
+  json_object *vws =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":11,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[]}]}]}");
+  Tiled v = empty_tiled();
+  collect(vws, vws, "_m4", "_s4", "_p4", &v);
+  CHECK(structure_drift(&v, vws));
+  json_object_put(vws);
+
+  /* стопка-ряд splith: узкие полосы (n=3, чтобы был контейнер) */
+  json_object *stripe =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":11,\"type\":\"con\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[]},"
+           "{\"id\":30,\"type\":\"con\",\"marks\":[]}]}]}");
+  Tiled st = empty_tiled();
+  collect(stripe, stripe, "_m4", "_s4", "_p4", &st);
+  CHECK(structure_drift(&st, stripe));
+  json_object_put(stripe);
+
+  /* стопка разъехалась по двум контейнерам — дрейф */
+  json_object *splitstack =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":11,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[]}]},"
+           "{\"id\":12,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":30,\"type\":\"con\",\"marks\":[]}]}]}");
+  Tiled ss = empty_tiled();
+  collect(splitstack, splitstack, "_m4", "_s4", "_p4", &ss);
+  CHECK(structure_drift(&ss, splitstack));
+  json_object_put(splitstack);
+
+  /* стопка собрана в splitv, но заперта в singleton-обёртке: листья
+     выглядят канонично, top-level shape — нет */
+  json_object *nested =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":12,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":11,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[\"_s4\"]},"
+           "{\"id\":30,\"type\":\"con\",\"marks\":[]}]}]}]}");
+  Tiled nw = empty_tiled();
+  collect(nested, nested, "_m4", "_s4", "_p4", &nw);
+  json_object *nwrap = json_object_array_get_idx(jarr(nested, "nodes"), 1);
+  json_object *nstack = json_object_array_get_idx(jarr(nwrap, "nodes"), 0);
+  CHECK(!con_direct_child(nested, nstack));
+  CHECK(con_direct_child(nwrap, nstack));
+  CHECK(structure_drift(&nw, nested));
+  json_object_put(nested);
+
+  /* tabbed/stacked стопки — легальный выбор юзера (n=3) */
+  json_object *tabs =
+      json("{\"id\":4,\"type\":\"workspace\",\"layout\":\"splith\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]},"
+           "{\"id\":11,\"type\":\"con\",\"layout\":\"tabbed\",\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[]},"
+           "{\"id\":30,\"type\":\"con\",\"marks\":[]}]}]}");
+  Tiled tb = empty_tiled();
+  collect(tabs, tabs, "_m4", "_s4", "_p4", &tb);
+  CHECK(!structure_drift(&tb, tabs));
+  json_object_put(tabs);
+
+  /* одно окно / нет метки — watchdog не спорит */
+  Tiled one = empty_tiled();
+  one.n = 1;
+  one.id[0] = 10;
+  one.master_id = 10;
+  CHECK(!structure_drift(&one, nullptr));
+  one.n = 2;
+  one.id[1] = 20;
+  one.master_id = -1;
+  CHECK(!structure_drift(&one, nullptr));
+}
+
+/* ══════════════ лечение обёртки вокруг стопки ══════════════ */
+
+static void test_stack_wrapper_heal(void) {
+  reset_runtime();
+  int sv[2] = {-1, -1};
+  CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+  if (sv[0] < 0)
+    return;
+
+  json_object *ws =
+      json("{\"id\":4,\"type\":\"workspace\",\"name\":\"1\","
+           "\"layout\":\"splith\",\"rect\":{\"width\":1280,\"height\":720},"
+           "\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"],"
+           "\"rect\":{\"x\":0,\"y\":0,\"width\":704,\"height\":720}},"
+           "{\"id\":12,\"type\":\"con\",\"layout\":\"splitv\","
+           "\"rect\":{\"x\":704,\"y\":0,\"width\":576,\"height\":720},"
+           "\"nodes\":["
+           "{\"id\":11,\"type\":\"con\",\"layout\":\"splitv\","
+           "\"rect\":{\"x\":704,\"y\":0,\"width\":576,\"height\":720},"
+           "\"nodes\":["
+           "{\"id\":20,\"type\":\"con\",\"marks\":[\"_s4\"],"
+           "\"rect\":{\"x\":704,\"y\":0,\"width\":576,\"height\":360}},"
+           "{\"id\":30,\"type\":\"con\",\"marks\":[],"
+           "\"rect\":{\"x\":704,\"y\":360,\"width\":576,\"height\":360}}]}]}]}");
+
+  /* ответ на пачку кладём заранее: send_cmd после отправки читает его */
+  CHECK(ipc_send(sv[1], RUN_COMMAND, "[]", 2));
+  CHECK(retile_ws(sv[0], ws, ws, &ACT_NONE));
+
+  uint32_t type = 0;
+  size_t len = 0;
+  uint8_t *cmd = ipc_recv(sv[1], &type, &len);
+  CHECK(cmd != nullptr && type == RUN_COMMAND);
+  if (cmd != nullptr)
+    CHECK(strstr((const char *)cmd, "[con_id=11] split none") != nullptr);
+  free(cmd);
+
+  json_object_put(ws);
+  close(sv[0]);
+  close(sv[1]);
+}
+
 /* ══════════════ dead_master_ws ══════════════ */
 
 static void test_dead_master_ws(void) {
@@ -581,6 +757,7 @@ static void test_snapshots(void) {
     CHECK(s->partner == 30);
     CHECK(s->n == 2);
     CHECK(s->stack[0] == 20 && s->stack[1] == 30);
+    CHECK(s->flat); /* мастер — прямой ребёнок ws */
   }
   json_object_put(ws);
 
@@ -595,7 +772,21 @@ static void test_snapshots(void) {
   s = snap_get(4);
   CHECK(s != nullptr && s->n == 0 && s->master == 10);
   CHECK(s != nullptr && s->partner == -1);
+  CHECK(s != nullptr && s->flat);
   json_object_put(single);
+
+  /* мастер в singleton-обёртке: слепой спавн должен отказаться */
+  reset_snapshots();
+  json_object *wrapped =
+      json("{\"id\":4,\"name\":\"dev\",\"nodes\":["
+           "{\"id\":65,\"type\":\"con\",\"layout\":\"splitv\",\"nodes\":["
+           "{\"id\":10,\"type\":\"con\",\"marks\":[\"_m4\"]}]}]}");
+  Tiled wr = empty_tiled();
+  collect(wrapped, wrapped, "_m4", "_s4", "_p4", &wr);
+  snap_store_tiles(4, wrapped, &wr);
+  s = snap_get(4);
+  CHECK(s != nullptr && !s->flat);
+  json_object_put(wrapped);
 
   /* t.n == 0: снимок не создаётся (n = -1 отбрасывается) */
   reset_snapshots();
@@ -1134,6 +1325,83 @@ static void test_ipc(void) {
   close(sv[1]);
 }
 
+/* ══════════════ кэш сырого дерева watchdog ══════════════ */
+
+static void test_watchdog_cache(void) {
+  int sv[2] = {-1, -1};
+  CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+  if (sv[0] < 0)
+    return;
+
+  free(g_wd_raw);
+  g_wd_raw = nullptr;
+  g_wd_raw_len = 0;
+  wd_raw_forget();
+
+  const char *a = "{\"id\":4}";
+  const char *b = "{\"id\":5}";
+
+  /* первый ответ разбирается и попадает в кэш */
+  CHECK(ipc_send(sv[1], GET_TREE, a, strlen(a)));
+  json_object *t = get_tree_watchdog(sv[0]);
+  CHECK(t != nullptr);
+  if (t != nullptr) {
+    CHECK(jint(t, "id") == 4);
+    json_object_put(t);
+  }
+
+  /* байт в байт тот же ответ — разбор пропущен */
+  CHECK(ipc_send(sv[1], GET_TREE, a, strlen(a)));
+  CHECK(get_tree_watchdog(sv[0]) == nullptr);
+
+  /* дерево изменилось — снова разбираем */
+  CHECK(ipc_send(sv[1], GET_TREE, b, strlen(b)));
+  t = get_tree_watchdog(sv[0]);
+  CHECK(t != nullptr);
+  if (t != nullptr) {
+    CHECK(jint(t, "id") == 5);
+    json_object_put(t);
+  }
+
+  /* сброс после лечения: те же байты обязаны перечитаться */
+  wd_raw_forget();
+  CHECK(ipc_send(sv[1], GET_TREE, b, strlen(b)));
+  t = get_tree_watchdog(sv[0]);
+  CHECK(t != nullptr);
+  if (t != nullptr) {
+    CHECK(jint(t, "id") == 5);
+    json_object_put(t);
+  }
+
+  /* другая длина — сравнение байт не должно зацепиться за старый хвост */
+  const char *longer = "{\"id\":4000,\"layout\":\"splith\"}";
+  CHECK(ipc_send(sv[1], GET_TREE, longer, strlen(longer)));
+  t = get_tree_watchdog(sv[0]);
+  CHECK(t != nullptr);
+  if (t != nullptr) {
+    CHECK(jint(t, "id") == 4000);
+    json_object_put(t);
+  }
+
+  /* битый ответ — одна повторная попытка, затем валидное дерево */
+  wd_raw_forget();
+  CHECK(ipc_send(sv[1], GET_TREE, "not-json", 8));
+  CHECK(ipc_send(sv[1], GET_TREE, a, strlen(a)));
+  t = get_tree_watchdog(sv[0]);
+  CHECK(t != nullptr);
+  if (t != nullptr) {
+    CHECK(jint(t, "id") == 4);
+    json_object_put(t);
+  }
+
+  free(g_wd_raw);
+  g_wd_raw = nullptr;
+  g_wd_raw_len = 0;
+  wd_raw_forget();
+  close(sv[0]);
+  close(sv[1]);
+}
+
 static void test_posix_io(void) {
   int sv[2] = {-1, -1};
   CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
@@ -1183,6 +1451,8 @@ int main(void) {
   test_collect();
   test_proportions();
   test_master_out_of_slot();
+  test_structure_drift();
+  test_stack_wrapper_heal();
   test_dead_master_ws();
   test_snapshots();
   test_echo();
@@ -1193,6 +1463,7 @@ int main(void) {
   test_find_focused();
   test_handle_ws_event();
   test_ipc();
+  test_watchdog_cache();
   test_posix_io();
   test_now_ms();
 
