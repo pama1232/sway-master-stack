@@ -1,22 +1,23 @@
 # sway-mstack
 
 [![CI](https://github.com/pama1232/sway-master-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pama1232/sway-master-stack/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-2.1.1-blue.svg)](https://github.com/pama1232/sway-master-stack/releases/tag/v2.1.1)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/pama1232/sway-master-stack/releases/tag/v2.2.0)
 [![Standard](https://img.shields.io/badge/C23-ISO%2FIEC%209899%3A2024-00599C.svg)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
 [![Platform](https://img.shields.io/badge/Sway%20%7C%20SwayFX-orange.svg)](https://swaywm.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](#english) | [Русский](#русский)
 
-[Demo (24 MB MP4, external)](https://github.com/pama1232/sway-master-stack/releases/download/v2.1.1/demo.mp4).
-It shows SwayFX with 250 ms animations: master/stack layout, zoom, and moving
-the master to the scratchpad. Vanilla Sway applies layout changes as discrete
-transactions, so windows may jump.
+![Demo](demo.gif)
 
-Демо (MP4, 24 МБ, внешняя ссылка). Показан SwayFX с анимациями 250 мс:
-раскладка master/stack, зум и уход мастера в скретчпад. Ванильный Sway
-применяет изменения раскладки дискретными транзакциями, поэтому окна могут
-дёргаться.
+> [!NOTE]
+> **About visual smoothness in the demo:**
+> The recording uses **SwayFX** with `animation_duration_ms 250`. In Sway,
+> the compositor maps and renders a window surface (`view_map`) before
+> emitting the `window::new` IPC event. Any external daemon can only reorder
+> containers after receiving that event. In vanilla Sway (without
+> animations), you may see a brief 1-frame repositioning step when opening
+> windows. Enabling window animations in SwayFX smooths out this transition.
 
 ---
 
@@ -59,10 +60,11 @@ keybindings.
 - When only one stacked window remains, the workspace returns to a horizontal
   master/stack instead of leaving a lone vertical container.
 - About 2–3 MB RSS in a release build. While idle, the center-drop watchdog
-  costs about 0.2% of one core with five windows and about 0.5% on a
-  28-window tree (one `GET_TREE` per 100 ms); without a pending swap it sends
-  no commands. Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
-- 325 unit checks and 10 E2E scenarios (87 checks), run in CI in Release and
+  reads the tree every 100 ms but parses the JSON only when the reply
+  changed: with five windows that is about 0.1% of one core in a Debug build
+  with logging, and practically 0 in Release. Without a pending swap it
+  sends no commands. Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
+- 366 unit checks and 12 E2E scenarios (113 checks), run in CI in Release and
   Debug.
 
 ### Install
@@ -136,6 +138,11 @@ splith {
     splitv stack _s<ws>
 }
 ```
+
+For exactly two windows the stack container is omitted: the master and the
+stack window are direct siblings under `splith`. This keeps both swap
+directions native and smooth; from three windows on, the stack is a `splitv`
+container.
 
 It sends the required commands as one `run_command` batch, with workspace guards
 so a window moved to another workspace is never touched by mistake. Healthy
@@ -233,12 +240,13 @@ Master/stack для Sway в стиле dwm, реализованный как н
   мастера, а фокус не перескакивает на другой монитор.
 - Если в стопке осталось одно окно, воркспейс возвращается к горизонтальной
   раскладке, а не оставляет одинокий вертикальный контейнер.
-- Около 2–3 МБ RSS в релизной сборке. В простое watchdog свапа центра стоит
-  примерно 0.2% одного ядра при пяти окнах и около 0.5% на дереве из 28 окон
-  (один `GET_TREE` раз в 100 мс); без свапа он не отправляет команд. Чисто под
-  AddressSanitizer и UndefinedBehaviorSanitizer.
-- 325 unit-проверок и 10 E2E-сценариев (87 проверок), в CI на каждый push,
-  в Release и Debug.
+- Около 2–3 МБ RSS в релизной сборке. В простое watchdog свапа центра
+  читает дерево раз в 100 мс, но разбирает JSON только когда ответ
+  изменился: на пяти окнах это около 0.1% одного ядра в Debug с
+  логированием и практически 0 в Release. Без свапа он не отправляет
+  команд. Чисто под AddressSanitizer и UndefinedBehaviorSanitizer.
+- 366 unit-проверок и 12 E2E-сценариев (113 проверок), в CI на каждый
+  push, в Release и Debug.
 
 ### Установка
 
@@ -311,6 +319,10 @@ splith {
     splitv-стопка _s<ws>
 }
 ```
+
+При двух окнах контейнер стопки не создаётся: мастер и окно стопки — прямые
+соседи под `splith`. Так оба направления swap остаются нативными и плавными;
+начиная с трёх окон стопка живёт в `splitv`-контейнере.
 
 Затем нужные команды уходят одной пачкой `run_command` с гвардами по имени
 воркспейса: окно, которое успели перенести на другой стол, не будет задето по

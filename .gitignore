@@ -19,8 +19,12 @@ compile_commands.json
 LOG.md
 n3998.pdf
 
-# Демо-медиа: хранится вне репозитория, в README — внешняя ссылка
-demo.gif
+# Демо-медиа: в репозитории только оптимизированный demo.gif,
+# исходники и варианты остаются вне git.
 demo-nvenc.mp4
 demo-*.gif
 demo-*.mp4
+
+# Рабочие каталоги тестовых прогонов
+tests/.work/
+tests/**/work/

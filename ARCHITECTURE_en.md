@@ -25,6 +25,12 @@ splith {
 }
 ```
 
+For n=2 the stack container is omitted: the master and the stack window
+are direct siblings under `splith`. Otherwise `move right` on the master
+pulls it into the singleton wrapper and the workspace collapses into a
+full-screen `splitv` for a frame; flat siblings give a native horizontal
+swap in both directions. From n=3 the regular `splitv` stack applies.
+
 The architecture grew out of a few hard constraints:
 
 - **No transactions.** Sway applies each IPC command separately; an
@@ -207,14 +213,27 @@ copies the sibling's geometry (native 50/50), and the marks remain on
 their old windows.
 
 Every `WATCHDOG_MS` (100 ms) of `poll()` silence the daemon reads the
-tree and checks the invariant: the `_m<ws>` holder must be slot 0. If the
-mark moved into the stack, the workspace is healed by the regular
-`retile_ws`: 0–3 commands (re-mark `_m`/`_s` and `resize 55 ppt`). A
-healthy workspace costs one `GET_TREE`+parse and zero commands;
-workspaces without `_m` or with a mark on a non-slot are left alone. All
-workspaces are checked, so cross-workspace swaps are covered too.
-Measured cost: ~0.2% of one core with five windows and ~0.5% on a
-28-window tree.
+tree and checks the structural invariant: the `_m<ws>` holder is in
+slot 0, the master is a direct child of the workspace, the workspace is
+`splith`; for n=2 both windows are direct siblings, and for n>=3 a stack
+container exists, sits directly under the workspace, and is not `splith`
+(a row of stripes). Any drift is healed by the regular `retile_ws`: 0–3
+commands (re-mark `_m`/`_s`, `split none` for a singleton wrapper,
+`split vertical`, `resize 55 ppt`). A healthy workspace costs one
+`GET_TREE` and zero commands; workspaces without `_m` or with a mark on a
+non-slot are left alone. All workspaces are checked, so cross-workspace
+swaps are covered too.
+
+The raw `GET_TREE` reply is cached: when the next tick receives a
+byte-identical JSON payload, `json_tokener_parse` is skipped, since
+comparing bytes is about two orders of magnitude cheaper than parsing.
+After a healing batch the cache is dropped so the next tick re-reads the
+result of those commands; if drift is found but no commands could be
+built, the cache is dropped too and the next tick retries the heal.
+Measured with five windows: 0–10 ms of CPU per
+10 s of idling in a Debug build with logging (up to ~0.1% of one core),
+0 ms in Release without logs; in a workload of 280 `GET_TREE` calls, 159
+replies matched and were not parsed.
 
 ---
 
@@ -247,12 +266,17 @@ Main branches:
    only stack window, `move left` is not used (on a singleton it warps
    the window to the adjacent output) — `split none` is used instead to
    dissolve Sway's singleton wrapper.
-4. **Proportions.** If the master width is outside `MASTER_PCT ± 3%`,
+4. **n=2 canon.** The stack is not wrapped in a container: the master
+   and the stack window are direct siblings. A singleton wrapper is
+   dissolved with `split none` (a parent with one child, so the window
+   does not warp), `_s` is set, and `resize 55 ppt` is sent if needed.
+   This keeps both swap directions native.
+5. **Proportions.** If the master width is outside `MASTER_PCT ± 3%`,
    or a window has "escaped" its container, send
    `resize set width N ppt`.
-5. **Stack.** The `_s` anchor is placed on the first non-master; a flat
-   workspace is wrapped in `split vertical`; stray windows are moved to
-   the anchor.
+6. **Stack (n>=3).** The `_s` anchor is placed on the first non-master;
+   a flat workspace is wrapped in `split vertical`; stray windows are
+   moved to the anchor.
 
 A mark-only batch is not structural: the snapshot remains valid after
 it. Any `move/swap/split/layout` command increments `g_struct_sent`,
@@ -399,11 +423,12 @@ UndefinedBehaviorSanitizer.
 
 `tests/unit/test_main.c` includes `src/main.c` directly with
 `#define main sms_main`. This makes static functions testable without
-extracting them into a separate library. There are 325 checks now.
+extracting them into a separate library. There are 366 checks now.
 Covered: name escaping, JSON accessors, tile collection, proportions,
 snapshots, echo cache, command building, IPC framing, POSIX I/O, focus
-lookup, event handling, and the master invariant used by the center-swap
-watchdog.
+lookup, event handling, the master invariant used by the center-swap
+watchdog, and the raw-tree cache (an identical reply is not parsed, a
+changed one is).
 
 Run:
 
@@ -422,14 +447,22 @@ ctest --test-dir build --output-on-failure
 - assertions go through `swaymsg -t get_tree` and `jq`.
 
 The live user session is never touched. Scenarios: n=1/2/3 geometry,
-master death, master to scratchpad, center drop drag (requires `wlrctl`),
-zoom, edge moves, rotation, tabbed stack, long names, and a second
-output. That is 10 scenarios / 87 checks in total.
+native n=2 swap, master death, master to scratchpad followed by a spawn,
+center drop drag (requires `wlrctl`), zoom, edge moves, rotation, tabbed
+stack, long names, and a second output. That is 12 scenarios / 113 checks
+in total.
 
 ```sh
 tests/e2e/run.sh
 E2E_SKIP_MULTI=1 tests/e2e/run.sh   # without create_output
 ```
+
+### All levels
+
+`tests/run-all.sh` builds Release and Debug, runs unit and E2E in both,
+checks sanitizer reports, runs layout fuzzing on several seeds
+(`tests/fuzz/layout.sh`) and an informational benchmark
+(`tests/bench/bench.sh`). The quick mode is `tests/run-all.sh --quick`.
 
 ### CI
 
